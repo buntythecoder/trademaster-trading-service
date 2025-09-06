@@ -1,0 +1,55 @@
+server:
+  port: 0  # Random available port for tests
+
+spring:
+  application:
+    name: trading-service-test
+  
+  # In-memory H2 database for tests
+  r2dbc:
+    url: r2dbc:h2:mem:///testdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    username: sa
+    password: 
+  
+  # Embedded Redis for tests
+  data:
+    redis:
+      host: localhost
+      port: 6370  # Different port for test Redis
+  
+  # Disable Flyway for tests (using H2 schema auto-creation)
+  flyway:
+    enabled: false
+
+# Test-specific configuration
+trademaster:
+  trading:
+    risk:
+      enabled: false  # Disable complex risk checks in tests
+    brokers:
+      enabled: false  # Disable broker integration in tests
+    websocket:
+      enabled: false  # Disable WebSocket in tests
+
+# JWT test configuration
+jwt:
+  secret: test-secret-key-for-testing-only-not-for-production
+  expiration: 86400000
+
+# Disable metrics in tests
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  metrics:
+    export:
+      prometheus:
+        enabled: false
+
+# Reduce logging noise in tests
+logging:
+  level:
+    com.trademaster.trading: WARN
+    org.springframework: WARN
+    reactor: WARN

@@ -1,0 +1,364 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <!-- Property definitions -->
+    <springProfile name="!prod">
+        <property name="LOG_LEVEL" value="INFO"/>
+        <property name="LOG_PATTERN" value="%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"/>
+    </springProfile>
+    
+    <springProfile name="prod">
+        <property name="LOG_LEVEL" value="INFO"/>
+    </springProfile>
+    
+    <!-- Console appender for development -->
+    <springProfile name="!prod">
+        <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+            <encoder>
+                <pattern>${LOG_PATTERN}</pattern>
+            </encoder>
+        </appender>
+    </springProfile>
+    
+    <!-- Structured JSON appender for production -->
+    <springProfile name="prod">
+        <appender name="JSON_CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+            <encoder class="net.logstash.logback.encoder.LoggingEventCompositeJsonEncoder">
+                <providers>
+                    <timestamp>
+                        <timeZone>UTC</timeZone>
+                        <fieldName>@timestamp</fieldName>
+                    </timestamp>
+                    <version/>
+                    <logLevel>
+                        <fieldName>level</fieldName>
+                    </logLevel>
+                    <message>
+                        <fieldName>message</fieldName>
+                    </message>
+                    <mdc>
+                        <fieldName>mdc</fieldName>
+                    </mdc>
+                    <arguments>
+                        <fieldName>arguments</fieldName>
+                    </arguments>
+                    <stackTrace>
+                        <fieldName>stack_trace</fieldName>
+                    </stackTrace>
+                    <pattern>
+                        <pattern>
+                            {
+                                "service": "trading-service",
+                                "environment": "${spring.profiles.active:-default}",
+                                "version": "${spring.application.version:-unknown}",
+                                "host": "${HOSTNAME:-unknown}",
+                                "thread": "%thread",
+                                "logger": "%logger"
+                            }
+                        </pattern>
+                    </pattern>
+                </providers>
+            </encoder>
+        </appender>
+    </springProfile>
+    
+    <!-- File appender for all environments -->
+    <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>logs/trading-service.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>logs/trading-service.%d{yyyy-MM-dd}.%i.gz</fileNamePattern>
+            <maxFileSize>100MB</maxFileSize>
+            <maxHistory>30</maxHistory>
+            <totalSizeCap>10GB</totalSizeCap>
+        </rollingPolicy>
+        <encoder class="net.logstash.logback.encoder.LoggingEventCompositeJsonEncoder">
+            <providers>
+                <timestamp>
+                    <timeZone>UTC</timeZone>
+                    <fieldName>@timestamp</fieldName>
+                </timestamp>
+                <version/>
+                <logLevel>
+                    <fieldName>level</fieldName>
+                </logLevel>
+                <message>
+                    <fieldName>message</fieldName>
+                </message>
+                <mdc>
+                    <fieldName>mdc</fieldName>
+                </mdc>
+                <arguments>
+                    <fieldName>arguments</fieldName>
+                </arguments>
+                <stackTrace>
+                    <fieldName>stack_trace</fieldName>
+                </stackTrace>
+                <pattern>
+                    <pattern>
+                        {
+                            "service": "trading-service",
+                            "environment": "${spring.profiles.active:-default}",
+                            "version": "${spring.application.version:-unknown}",
+                            "host": "${HOSTNAME:-unknown}",
+                            "thread": "%thread",
+                            "logger": "%logger"
+                        }
+                    </pattern>
+                </pattern>
+            </providers>
+        </encoder>
+    </appender>
+    
+    <!-- Trading audit log appender -->
+    <appender name="TRADING_AUDIT" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>logs/trading-audit.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>logs/trading-audit.%d{yyyy-MM-dd}.%i.gz</fileNamePattern>
+            <maxFileSize>100MB</maxFileSize>
+            <maxHistory>365</maxHistory>
+            <totalSizeCap>100GB</totalSizeCap>
+        </rollingPolicy>
+        <encoder class="net.logstash.logback.encoder.LoggingEventCompositeJsonEncoder">
+            <providers>
+                <timestamp>
+                    <timeZone>UTC</timeZone>
+                    <fieldName>@timestamp</fieldName>
+                </timestamp>
+                <logLevel>
+                    <fieldName>level</fieldName>
+                </logLevel>
+                <message>
+                    <fieldName>message</fieldName>
+                </message>
+                <mdc>
+                    <fieldName>mdc</fieldName>
+                </mdc>
+                <arguments>
+                    <fieldName>arguments</fieldName>
+                </arguments>
+                <pattern>
+                    <pattern>
+                        {
+                            "service": "trading-service",
+                            "log_type": "trading_audit",
+                            "environment": "${spring.profiles.active:-default}",
+                            "version": "${spring.application.version:-unknown}",
+                            "host": "${HOSTNAME:-unknown}",
+                            "thread": "%thread",
+                            "logger": "%logger"
+                        }
+                    </pattern>
+                </pattern>
+            </providers>
+        </encoder>
+        <filter class="ch.qos.logback.core.filter.EvaluatorFilter">
+            <evaluator class="ch.qos.logback.classic.boolex.JaninoEventEvaluator">
+                <expression>
+                    return event.getMDCPropertyMap().get("category") == "audit" ||
+                           event.getMessage().contains("order") ||
+                           event.getMessage().contains("trade") ||
+                           event.getMessage().contains("portfolio") ||
+                           event.getMessage().contains("audit");
+                </expression>
+            </evaluator>
+            <OnMismatch>DENY</OnMismatch>
+            <OnMatch>ACCEPT</OnMatch>
+        </filter>
+    </appender>
+    
+    <!-- Risk management log appender -->
+    <appender name="RISK_MANAGEMENT" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>logs/trading-risk.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>logs/trading-risk.%d{yyyy-MM-dd}.%i.gz</fileNamePattern>
+            <maxFileSize>50MB</maxFileSize>
+            <maxHistory>90</maxHistory>
+            <totalSizeCap>5GB</totalSizeCap>
+        </rollingPolicy>
+        <encoder class="net.logstash.logback.encoder.LoggingEventCompositeJsonEncoder">
+            <providers>
+                <timestamp>
+                    <timeZone>UTC</timeZone>
+                    <fieldName>@timestamp</fieldName>
+                </timestamp>
+                <logLevel>
+                    <fieldName>level</fieldName>
+                </logLevel>
+                <message>
+                    <fieldName>message</fieldName>
+                </message>
+                <mdc>
+                    <fieldName>mdc</fieldName>
+                </mdc>
+                <arguments>
+                    <fieldName>arguments</fieldName>
+                </arguments>
+                <pattern>
+                    <pattern>
+                        {
+                            "service": "trading-service",
+                            "log_type": "risk_management",
+                            "environment": "${spring.profiles.active:-default}",
+                            "version": "${spring.application.version:-unknown}",
+                            "host": "${HOSTNAME:-unknown}",
+                            "thread": "%thread",
+                            "logger": "%logger"
+                        }
+                    </pattern>
+                </pattern>
+            </providers>
+        </encoder>
+        <filter class="ch.qos.logback.core.filter.EvaluatorFilter">
+            <evaluator class="ch.qos.logback.classic.boolex.JaninoEventEvaluator">
+                <expression>
+                    return event.getMessage().contains("risk") ||
+                           event.getMessage().contains("violation") ||
+                           event.getMessage().contains("margin") ||
+                           event.getMessage().contains("limit");
+                </expression>
+            </evaluator>
+            <OnMismatch>DENY</OnMismatch>
+            <OnMatch>ACCEPT</OnMatch>
+        </filter>
+    </appender>
+    
+    <!-- Performance metrics log appender -->
+    <appender name="PERFORMANCE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>logs/trading-performance.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>logs/trading-performance.%d{yyyy-MM-dd}.%i.gz</fileNamePattern>
+            <maxFileSize>50MB</maxFileSize>
+            <maxHistory>7</maxHistory>
+            <totalSizeCap>1GB</totalSizeCap>
+        </rollingPolicy>
+        <encoder class="net.logstash.logback.encoder.LoggingEventCompositeJsonEncoder">
+            <providers>
+                <timestamp>
+                    <timeZone>UTC</timeZone>
+                    <fieldName>@timestamp</fieldName>
+                </timestamp>
+                <message>
+                    <fieldName>message</fieldName>
+                </message>
+                <mdc>
+                    <fieldName>mdc</fieldName>
+                </mdc>
+                <arguments>
+                    <fieldName>arguments</fieldName>
+                </arguments>
+                <pattern>
+                    <pattern>
+                        {
+                            "service": "trading-service",
+                            "log_type": "performance",
+                            "environment": "${spring.profiles.active:-default}",
+                            "host": "${HOSTNAME:-unknown}"
+                        }
+                    </pattern>
+                </pattern>
+            </providers>
+        </encoder>
+        <filter class="ch.qos.logback.core.filter.EvaluatorFilter">
+            <evaluator class="ch.qos.logback.classic.boolex.JaninoEventEvaluator">
+                <expression>
+                    return event.getMDCPropertyMap().get("category") == "performance" ||
+                           event.getMDCPropertyMap().get("durationMs") != null ||
+                           event.getMessage().contains("latency") ||
+                           event.getMessage().contains("slippage");
+                </expression>
+            </evaluator>
+            <OnMismatch>DENY</OnMismatch>
+            <OnMatch>ACCEPT</OnMatch>
+        </filter>
+    </appender>
+    
+    <!-- Async appenders for better performance -->
+    <appender name="ASYNC_FILE" class="ch.qos.logback.classic.AsyncAppender">
+        <appender-ref ref="FILE"/>
+        <queueSize>2048</queueSize>
+        <discardingThreshold>0</discardingThreshold>
+        <maxFlushTime>5000</maxFlushTime>
+    </appender>
+    
+    <appender name="ASYNC_TRADING_AUDIT" class="ch.qos.logback.classic.AsyncAppender">
+        <appender-ref ref="TRADING_AUDIT"/>
+        <queueSize>1024</queueSize>
+        <discardingThreshold>0</discardingThreshold>
+        <maxFlushTime>5000</maxFlushTime>
+    </appender>
+    
+    <appender name="ASYNC_RISK" class="ch.qos.logback.classic.AsyncAppender">
+        <appender-ref ref="RISK_MANAGEMENT"/>
+        <queueSize>512</queueSize>
+        <discardingThreshold>0</discardingThreshold>
+        <maxFlushTime>5000</maxFlushTime>
+    </appender>
+    
+    <appender name="ASYNC_PERFORMANCE" class="ch.qos.logback.classic.AsyncAppender">
+        <appender-ref ref="PERFORMANCE"/>
+        <queueSize>1024</queueSize>
+        <discardingThreshold>0</discardingThreshold>
+        <maxFlushTime>1000</maxFlushTime>
+    </appender>
+    
+    <!-- Logger configurations -->
+    <logger name="com.trademaster.trading" level="${LOG_LEVEL}" additivity="false">
+        <springProfile name="!prod">
+            <appender-ref ref="CONSOLE"/>
+        </springProfile>
+        <springProfile name="prod">
+            <appender-ref ref="JSON_CONSOLE"/>
+        </springProfile>
+        <appender-ref ref="ASYNC_FILE"/>
+        <appender-ref ref="ASYNC_TRADING_AUDIT"/>
+        <appender-ref ref="ASYNC_RISK"/>
+        <appender-ref ref="ASYNC_PERFORMANCE"/>
+    </logger>
+    
+    <!-- High-frequency trading logs (debug level in dev only) -->
+    <springProfile name="!prod">
+        <logger name="com.trademaster.trading.execution" level="DEBUG"/>
+        <logger name="com.trademaster.trading.strategy" level="DEBUG"/>
+    </springProfile>
+    <springProfile name="prod">
+        <logger name="com.trademaster.trading.execution" level="INFO"/>
+        <logger name="com.trademaster.trading.strategy" level="INFO"/>
+    </springProfile>
+    
+    <!-- Risk management logs -->
+    <logger name="com.trademaster.trading.risk" level="INFO"/>
+    
+    <!-- Portfolio management logs -->
+    <logger name="com.trademaster.trading.portfolio" level="INFO"/>
+    
+    <!-- Broker integration logs -->
+    <logger name="com.trademaster.trading.broker" level="INFO"/>
+    
+    <!-- Spring Boot actuator logs -->
+    <logger name="org.springframework.boot.actuator" level="INFO"/>
+    
+    <!-- Micrometer metrics logs -->
+    <logger name="io.micrometer" level="INFO"/>
+    
+    <!-- Database query logs (development only) -->
+    <springProfile name="!prod">
+        <logger name="org.hibernate.SQL" level="DEBUG"/>
+        <logger name="org.hibernate.type.descriptor.sql.BasicBinder" level="TRACE"/>
+    </springProfile>
+    
+    <!-- Security related logs -->
+    <logger name="org.springframework.security" level="INFO"/>
+    
+    <!-- Root logger -->
+    <root level="${LOG_LEVEL}">
+        <springProfile name="!prod">
+            <appender-ref ref="CONSOLE"/>
+        </springProfile>
+        <springProfile name="prod">
+            <appender-ref ref="JSON_CONSOLE"/>
+        </springProfile>
+        <appender-ref ref="ASYNC_FILE"/>
+    </root>
+    
+    <!-- Shutdown hook to ensure all logs are flushed -->
+    <shutdownHook class="ch.qos.logback.core.hook.DelayingShutdownHook"/>
+</configuration>

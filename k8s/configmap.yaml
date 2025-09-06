@@ -1,0 +1,149 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: trading-service-config
+  namespace: trademaster
+  labels:
+    app: trading-service
+    version: "2.0.0"
+data:
+  application.yml: |
+    server:
+      port: 8083
+      compression:
+        enabled: true
+        mime-types: text/html,text/xml,text/plain,text/css,text/javascript,application/javascript,application/json,application/xml
+        min-response-size: 1024
+    
+    spring:
+      application:
+        name: trading-service
+      profiles:
+        active: kubernetes,production
+      
+      datasource:
+        url: jdbc:postgresql://postgres-service:5432/trademaster_trading
+        username: ${POSTGRES_USER}
+        password: ${POSTGRES_PASSWORD}
+        driver-class-name: org.postgresql.Driver
+        hikari:
+          pool-name: TradingServiceCP
+          maximum-pool-size: 50
+          minimum-idle: 10
+          idle-timeout: 600000
+          connection-timeout: 20000
+          validation-timeout: 5000
+          leak-detection-threshold: 60000
+      
+      data:
+        redis:
+          host: redis-service
+          port: 6379
+          password: ${REDIS_PASSWORD}
+          database: 3
+          timeout: 5000ms
+          lettuce:
+            pool:
+              max-active: 50
+              max-idle: 25
+              min-idle: 5
+              max-wait: 10s
+      
+      threads:
+        virtual:
+          enabled: true
+    
+    management:
+      endpoints:
+        web:
+          exposure:
+            include: health,info,metrics,prometheus,readiness,liveness
+          base-path: /actuator
+      endpoint:
+        health:
+          show-details: always
+          probes:
+            enabled: true
+        metrics:
+          enabled: true
+      health:
+        probes:
+          enabled: true
+        readinessstate:
+          enabled: true
+        livenessstate:
+          enabled: true
+      metrics:
+        export:
+          prometheus:
+            enabled: true
+    
+    eureka:
+      client:
+        service-url:
+          defaultZone: http://eureka-service:8761/eureka/
+        enabled: true
+        fetch-registry: true
+        register-with-eureka: true
+      instance:
+        prefer-ip-address: true
+        status-page-url-path: /actuator/info
+        health-check-url-path: /actuator/health
+        metadata-map:
+          "version": "2.0.0"
+          "service-type": "trading"
+          "virtual-threads": "enabled"
+          "java-version": "24"
+    
+    logging:
+      level:
+        com.trademaster.trading: INFO
+        org.springframework.security: WARN
+      pattern:
+        console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level [%X{traceId},%X{spanId}] %logger{36} - %msg%n"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: trademaster
+  labels:
+    app: prometheus
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+    
+    rule_files:
+      - "rules/*.yml"
+    
+    scrape_configs:
+      - job_name: 'trading-service'
+        static_configs:
+          - targets: ['trading-service:8083']
+        metrics_path: /actuator/prometheus
+        scrape_interval: 10s
+      
+      - job_name: 'postgres-exporter'
+        static_configs:
+          - targets: ['postgres-exporter:9187']
+      
+      - job_name: 'redis-exporter'
+        static_configs:
+          - targets: ['redis-exporter:9121']
+      
+      - job_name: 'kubernetes-pods'
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - trademaster
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: true
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)

@@ -1,0 +1,1071 @@
+openapi: 3.0.3
+info:
+  title: TradeMaster Trading Service API
+  description: |
+    Enterprise-grade trading service providing multi-broker order execution, 
+    portfolio management, and risk control for financial markets.
+    
+    ## Features
+    - Multi-broker order routing and execution
+    - Real-time portfolio tracking and analytics  
+    - Advanced risk management and compliance
+    - High-performance Java 24 Virtual Threads architecture
+    - Comprehensive audit trail and regulatory reporting
+    - AgentOS integration for AI-driven trading
+    
+    ## Authentication
+    All endpoints require JWT authentication via the `Authorization` header.
+    
+    ## Rate Limiting
+    - Standard users: 1000 requests/minute
+    - Premium users: 5000 requests/minute
+    - Order placement: 100 orders/minute per user
+    
+    ## Error Handling
+    The API uses standard HTTP status codes and returns detailed error information
+    in a consistent format across all endpoints.
+    
+  version: '2.0.0'
+  contact:
+    name: TradeMaster API Support
+    url: https://api.trademaster.com/support
+    email: api-support@trademaster.com
+  license:
+    name: TradeMaster Enterprise License
+    url: https://trademaster.com/license
+  termsOfService: https://trademaster.com/terms
+
+servers:
+  - url: https://api.trademaster.com/trading/v2
+    description: Production server
+  - url: https://staging-api.trademaster.com/trading/v2
+    description: Staging server
+  - url: https://dev-api.trademaster.com/trading/v2
+    description: Development server
+  - url: http://localhost:8083/api/v2
+    description: Local development server
+
+security:
+  - bearerAuth: []
+
+paths:
+  # Order Management Endpoints
+  /orders:
+    post:
+      tags: [Orders]
+      summary: Place a new order
+      description: |
+        Submit a new trading order to the system. The order will be validated
+        for risk compliance before routing to the appropriate broker.
+        
+        **Order Processing Flow:**
+        1. Input validation and sanitization
+        2. Risk management checks
+        3. Broker routing and execution
+        4. Real-time status updates
+      operationId: placeOrder
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderRequest'
+            examples:
+              market_order:
+                summary: Market Buy Order
+                value:
+                  symbol: "RELIANCE"
+                  exchange: "NSE"
+                  orderType: "MARKET"
+                  side: "BUY"
+                  quantity: 100
+                  timeInForce: "DAY"
+              limit_order:
+                summary: Limit Sell Order
+                value:
+                  symbol: "INFY"
+                  exchange: "NSE"
+                  orderType: "LIMIT"
+                  side: "SELL"
+                  quantity: 50
+                  limitPrice: 1500.50
+                  timeInForce: "GTC"
+      responses:
+        '201':
+          description: Order successfully placed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+              examples:
+                success:
+                  summary: Successful order placement
+                  value:
+                    id: 12345
+                    orderId: "TM-1634567890123-ABC123"
+                    userId: 1001
+                    symbol: "RELIANCE"
+                    exchange: "NSE"
+                    orderType: "MARKET"
+                    side: "BUY"
+                    quantity: 100
+                    status: "ACKNOWLEDGED"
+                    brokerName: "ZERODHA"
+                    brokerOrderId: "240315000123456"
+                    createdAt: "2024-03-15T09:30:00Z"
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    get:
+      tags: [Orders]
+      summary: Get user orders
+      description: |
+        Retrieve orders for the authenticated user with optional filtering
+        and pagination support.
+      operationId: getUserOrders
+      parameters:
+        - name: status
+          in: query
+          description: Filter orders by status
+          schema:
+            type: array
+            items:
+              $ref: '#/components/schemas/OrderStatus'
+          style: form
+          explode: false
+        - name: symbol
+          in: query
+          description: Filter orders by trading symbol
+          schema:
+            type: string
+            example: "RELIANCE"
+        - name: from
+          in: query
+          description: Start date for order history (ISO 8601)
+          schema:
+            type: string
+            format: date-time
+            example: "2024-03-01T00:00:00Z"
+        - name: to
+          in: query
+          description: End date for order history (ISO 8601)
+          schema:
+            type: string
+            format: date-time
+            example: "2024-03-31T23:59:59Z"
+        - $ref: '#/components/parameters/PageNumber'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/SortBy'
+        - $ref: '#/components/parameters/SortOrder'
+      responses:
+        '200':
+          description: Orders retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  orders:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/OrderResponse'
+                  pagination:
+                    $ref: '#/components/schemas/PaginationInfo'
+                  summary:
+                    $ref: '#/components/schemas/OrderSummary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /orders/{orderId}:
+    get:
+      tags: [Orders]
+      summary: Get order details
+      description: Retrieve detailed information about a specific order
+      operationId: getOrderById
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          description: Order ID
+          schema:
+            type: string
+            example: "TM-1634567890123-ABC123"
+      responses:
+        '200':
+          description: Order details retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderDetailsResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    patch:
+      tags: [Orders]
+      summary: Modify order
+      description: |
+        Modify an existing order (quantity, price, or time in force).
+        Only pending or partially filled orders can be modified.
+      operationId: modifyOrder
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          description: Order ID to modify
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderModificationRequest'
+      responses:
+        '200':
+          description: Order modified successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Order cannot be modified (already filled/cancelled)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    delete:
+      tags: [Orders]
+      summary: Cancel order
+      description: |
+        Cancel a pending or partially filled order.
+        Completed orders cannot be cancelled.
+      operationId: cancelOrder
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          description: Order ID to cancel
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Order cancelled successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Order cannot be cancelled
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # Portfolio Management
+  /portfolio:
+    get:
+      tags: [Portfolio]
+      summary: Get portfolio summary
+      description: |
+        Retrieve current portfolio holdings, positions, and performance metrics
+      operationId: getPortfolio
+      parameters:
+        - name: includeHistory
+          in: query
+          description: Include historical performance data
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: Portfolio data retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PortfolioResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /portfolio/positions:
+    get:
+      tags: [Portfolio]
+      summary: Get current positions
+      description: Retrieve all current positions with P&L details
+      operationId: getPositions
+      responses:
+        '200':
+          description: Positions retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  positions:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Position'
+                  summary:
+                    $ref: '#/components/schemas/PortfolioSummary'
+
+  # Risk Management
+  /risk/limits:
+    get:
+      tags: [Risk Management]
+      summary: Get risk limits
+      description: Retrieve current risk limits and utilization
+      operationId: getRiskLimits
+      responses:
+        '200':
+          description: Risk limits retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RiskLimitsResponse'
+
+  # Market Data
+  /market/quote/{symbol}:
+    get:
+      tags: [Market Data]
+      summary: Get real-time quote
+      description: Retrieve real-time market quote for a symbol
+      operationId: getQuote
+      parameters:
+        - name: symbol
+          in: path
+          required: true
+          description: Trading symbol
+          schema:
+            type: string
+            example: "RELIANCE"
+        - name: exchange
+          in: query
+          description: Exchange identifier
+          schema:
+            type: string
+            example: "NSE"
+            default: "NSE"
+      responses:
+        '200':
+          description: Quote retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MarketQuote'
+
+  # System Health & Monitoring
+  /health:
+    get:
+      tags: [System]
+      summary: Health check endpoint
+      description: Check service health status
+      operationId: healthCheck
+      security: []
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        JWT token for authentication. Obtain from the auth service.
+        Format: `Bearer <token>`
+
+  parameters:
+    PageNumber:
+      name: page
+      in: query
+      description: Page number (0-based)
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+    PageSize:
+      name: size
+      in: query
+      description: Number of items per page
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    SortBy:
+      name: sort
+      in: query
+      description: Field to sort by
+      schema:
+        type: string
+        default: "createdAt"
+    SortOrder:
+      name: order
+      in: query
+      description: Sort order
+      schema:
+        type: string
+        enum: [asc, desc]
+        default: desc
+
+  schemas:
+    # Request Schemas
+    OrderRequest:
+      type: object
+      required: [symbol, exchange, orderType, side, quantity, timeInForce]
+      properties:
+        symbol:
+          type: string
+          description: Trading symbol
+          example: "RELIANCE"
+          pattern: "^[A-Z0-9-]{1,20}$"
+        exchange:
+          type: string
+          description: Exchange identifier
+          example: "NSE"
+          enum: [NSE, BSE, MCX]
+        orderType:
+          $ref: '#/components/schemas/OrderType'
+        side:
+          $ref: '#/components/schemas/OrderSide'
+        quantity:
+          type: integer
+          description: Order quantity
+          minimum: 1
+          maximum: 10000
+          example: 100
+        limitPrice:
+          type: number
+          format: double
+          description: Limit price (required for LIMIT and STOP_LIMIT orders)
+          minimum: 0.01
+          maximum: 100000
+          example: 2450.75
+        stopPrice:
+          type: number
+          format: double
+          description: Stop price (required for STOP_LOSS and STOP_LIMIT orders)
+          minimum: 0.01
+          maximum: 100000
+          example: 2400.00
+        timeInForce:
+          $ref: '#/components/schemas/TimeInForce'
+        expiryDate:
+          type: string
+          format: date
+          description: Expiry date (required for GTD orders)
+          example: "2024-03-30"
+        metadata:
+          type: object
+          description: Additional order metadata
+          additionalProperties:
+            type: string
+
+    OrderModificationRequest:
+      type: object
+      properties:
+        quantity:
+          type: integer
+          minimum: 1
+          maximum: 10000
+        limitPrice:
+          type: number
+          format: double
+          minimum: 0.01
+        stopPrice:
+          type: number
+          format: double
+          minimum: 0.01
+        timeInForce:
+          $ref: '#/components/schemas/TimeInForce'
+        expiryDate:
+          type: string
+          format: date
+
+    # Response Schemas
+    OrderResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: Internal order ID
+          example: 12345
+        orderId:
+          type: string
+          description: External order identifier
+          example: "TM-1634567890123-ABC123"
+        userId:
+          type: integer
+          format: int64
+          description: User ID
+          example: 1001
+        symbol:
+          type: string
+          example: "RELIANCE"
+        exchange:
+          type: string
+          example: "NSE"
+        orderType:
+          $ref: '#/components/schemas/OrderType'
+        side:
+          $ref: '#/components/schemas/OrderSide'
+        quantity:
+          type: integer
+          example: 100
+        limitPrice:
+          type: number
+          format: double
+          nullable: true
+          example: 2450.75
+        stopPrice:
+          type: number
+          format: double
+          nullable: true
+        timeInForce:
+          $ref: '#/components/schemas/TimeInForce'
+        expiryDate:
+          type: string
+          format: date
+          nullable: true
+        status:
+          $ref: '#/components/schemas/OrderStatus'
+        brokerOrderId:
+          type: string
+          nullable: true
+          example: "240315000123456"
+        brokerName:
+          type: string
+          nullable: true
+          example: "ZERODHA"
+        filledQuantity:
+          type: integer
+          example: 0
+        remainingQuantity:
+          type: integer
+          example: 100
+        averagePrice:
+          type: number
+          format: double
+          nullable: true
+        fillPercentage:
+          type: number
+          format: double
+          example: 0.0
+        orderValue:
+          type: number
+          format: double
+          example: 245075.0
+        executedValue:
+          type: number
+          format: double
+          example: 0.0
+        rejectionReason:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+          example: "2024-03-15T09:30:00Z"
+        updatedAt:
+          type: string
+          format: date-time
+          example: "2024-03-15T09:30:00Z"
+        submittedAt:
+          type: string
+          format: date-time
+          nullable: true
+        executedAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    OrderDetailsResponse:
+      allOf:
+        - $ref: '#/components/schemas/OrderResponse'
+        - type: object
+          properties:
+            fills:
+              type: array
+              items:
+                $ref: '#/components/schemas/OrderFill'
+            riskChecks:
+              type: array
+              items:
+                $ref: '#/components/schemas/RiskCheck'
+            auditTrail:
+              type: array
+              items:
+                $ref: '#/components/schemas/AuditEntry'
+
+    PortfolioResponse:
+      type: object
+      properties:
+        totalValue:
+          type: number
+          format: double
+          description: Total portfolio value
+          example: 1500000.0
+        cashBalance:
+          type: number
+          format: double
+          description: Available cash balance
+          example: 250000.0
+        positions:
+          type: array
+          items:
+            $ref: '#/components/schemas/Position'
+        dailyPnL:
+          type: number
+          format: double
+          description: Daily profit and loss
+          example: 5500.0
+        totalPnL:
+          type: number
+          format: double
+          description: Total realized + unrealized P&L
+          example: 125000.0
+        lastUpdated:
+          type: string
+          format: date-time
+          example: "2024-03-15T15:30:00Z"
+
+    Position:
+      type: object
+      properties:
+        symbol:
+          type: string
+          example: "RELIANCE"
+        exchange:
+          type: string
+          example: "NSE"
+        quantity:
+          type: integer
+          example: 200
+        averagePrice:
+          type: number
+          format: double
+          example: 2400.0
+        lastPrice:
+          type: number
+          format: double
+          example: 2450.0
+        marketValue:
+          type: number
+          format: double
+          example: 490000.0
+        unrealizedPnL:
+          type: number
+          format: double
+          example: 10000.0
+        dayChange:
+          type: number
+          format: double
+          example: 2.08
+        dayChangePercent:
+          type: number
+          format: double
+          example: 0.85
+
+    # Enums
+    OrderType:
+      type: string
+      enum: [MARKET, LIMIT, STOP_LOSS, STOP_LIMIT]
+      description: |
+        Order type:
+        * `MARKET` - Market order (executed at current market price)
+        * `LIMIT` - Limit order (executed at specified price or better)
+        * `STOP_LOSS` - Stop loss order (market order triggered at stop price)
+        * `STOP_LIMIT` - Stop limit order (limit order triggered at stop price)
+
+    OrderSide:
+      type: string
+      enum: [BUY, SELL]
+      description: Order side (BUY or SELL)
+
+    TimeInForce:
+      type: string
+      enum: [DAY, GTC, IOC, FOK, GTD]
+      description: |
+        Time in force:
+        * `DAY` - Day order (valid until market close)
+        * `GTC` - Good Till Cancelled (valid until explicitly cancelled)
+        * `IOC` - Immediate or Cancel (execute immediately, cancel remainder)
+        * `FOK` - Fill or Kill (execute completely or cancel)
+        * `GTD` - Good Till Date (valid until specified date)
+
+    OrderStatus:
+      type: string
+      enum: [PENDING, VALIDATED, SUBMITTED, ACKNOWLEDGED, PARTIALLY_FILLED, FILLED, CANCELLED, REJECTED, EXPIRED]
+      description: |
+        Order status:
+        * `PENDING` - Order received, awaiting validation
+        * `VALIDATED` - Order validated, ready for submission
+        * `SUBMITTED` - Order submitted to broker
+        * `ACKNOWLEDGED` - Order acknowledged by broker
+        * `PARTIALLY_FILLED` - Order partially executed
+        * `FILLED` - Order completely executed
+        * `CANCELLED` - Order cancelled
+        * `REJECTED` - Order rejected by broker or system
+        * `EXPIRED` - Order expired
+
+    # Supporting Schemas
+    OrderFill:
+      type: object
+      properties:
+        fillQuantity:
+          type: integer
+          example: 50
+        fillPrice:
+          type: number
+          format: double
+          example: 2445.50
+        fillTime:
+          type: string
+          format: date-time
+          example: "2024-03-15T09:31:15Z"
+        brokerFillId:
+          type: string
+          example: "BRK-FILL-123456"
+        commission:
+          type: number
+          format: double
+          example: 12.25
+        taxes:
+          type: number
+          format: double
+          example: 2.50
+
+    RiskCheck:
+      type: object
+      properties:
+        checkType:
+          type: string
+          example: "POSITION_LIMIT"
+        status:
+          type: string
+          enum: [PASSED, FAILED, WARNING]
+        message:
+          type: string
+          example: "Position limit check passed"
+        timestamp:
+          type: string
+          format: date-time
+
+    AuditEntry:
+      type: object
+      properties:
+        action:
+          type: string
+          example: "ORDER_PLACED"
+        timestamp:
+          type: string
+          format: date-time
+        userId:
+          type: integer
+          format: int64
+        details:
+          type: object
+          additionalProperties: true
+
+    # Utility Schemas
+    ErrorResponse:
+      type: object
+      required: [error, message]
+      properties:
+        error:
+          type: string
+          description: Error code
+          example: "VALIDATION_FAILED"
+        message:
+          type: string
+          description: Human-readable error message
+          example: "Invalid order quantity"
+        details:
+          type: object
+          description: Additional error details
+          additionalProperties: true
+        timestamp:
+          type: string
+          format: date-time
+          example: "2024-03-15T09:30:00Z"
+        path:
+          type: string
+          description: API endpoint path
+          example: "/api/v2/orders"
+
+    PaginationInfo:
+      type: object
+      properties:
+        page:
+          type: integer
+          description: Current page number (0-based)
+          example: 0
+        size:
+          type: integer
+          description: Items per page
+          example: 20
+        totalPages:
+          type: integer
+          description: Total number of pages
+          example: 5
+        totalElements:
+          type: integer
+          format: int64
+          description: Total number of items
+          example: 95
+        first:
+          type: boolean
+          description: Whether this is the first page
+          example: true
+        last:
+          type: boolean
+          description: Whether this is the last page
+          example: false
+
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [UP, DOWN, OUT_OF_SERVICE, UNKNOWN]
+          example: "UP"
+        components:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              status:
+                type: string
+              details:
+                type: object
+                additionalProperties: true
+
+    OrderSummary:
+      type: object
+      properties:
+        totalOrders:
+          type: integer
+          example: 45
+        pendingOrders:
+          type: integer
+          example: 5
+        filledOrders:
+          type: integer
+          example: 35
+        cancelledOrders:
+          type: integer
+          example: 5
+        totalOrderValue:
+          type: number
+          format: double
+          example: 2500000.0
+
+    PortfolioSummary:
+      type: object
+      properties:
+        totalPositions:
+          type: integer
+          example: 15
+        totalValue:
+          type: number
+          format: double
+          example: 1500000.0
+        dayPnL:
+          type: number
+          format: double
+          example: 5500.0
+        dayPnLPercent:
+          type: number
+          format: double
+          example: 0.37
+
+    RiskLimitsResponse:
+      type: object
+      properties:
+        maxPositionValue:
+          type: number
+          format: double
+          example: 10000000.0
+        currentPositionValue:
+          type: number
+          format: double
+          example: 1500000.0
+        maxSingleOrderValue:
+          type: number
+          format: double
+          example: 1000000.0
+        maxDailyTrades:
+          type: integer
+          example: 500
+        currentDailyTrades:
+          type: integer
+          example: 45
+        utilizationPercent:
+          type: number
+          format: double
+          example: 15.0
+
+    MarketQuote:
+      type: object
+      properties:
+        symbol:
+          type: string
+          example: "RELIANCE"
+        exchange:
+          type: string
+          example: "NSE"
+        lastPrice:
+          type: number
+          format: double
+          example: 2450.75
+        bidPrice:
+          type: number
+          format: double
+          example: 2450.50
+        askPrice:
+          type: number
+          format: double
+          example: 2451.00
+        volume:
+          type: integer
+          format: int64
+          example: 1250000
+        dayHigh:
+          type: number
+          format: double
+          example: 2465.00
+        dayLow:
+          type: number
+          format: double
+          example: 2430.00
+        previousClose:
+          type: number
+          format: double
+          example: 2440.00
+        change:
+          type: number
+          format: double
+          example: 10.75
+        changePercent:
+          type: number
+          format: double
+          example: 0.44
+        timestamp:
+          type: string
+          format: date-time
+          example: "2024-03-15T15:29:45Z"
+
+  responses:
+    BadRequest:
+      description: Invalid request data
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: "VALIDATION_FAILED"
+            message: "Invalid order quantity. Must be between 1 and 10000"
+            timestamp: "2024-03-15T09:30:00Z"
+            path: "/api/v2/orders"
+
+    Unauthorized:
+      description: Authentication required
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: "UNAUTHORIZED"
+            message: "Authentication token is required"
+            timestamp: "2024-03-15T09:30:00Z"
+            path: "/api/v2/orders"
+
+    Forbidden:
+      description: Insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: "FORBIDDEN"
+            message: "Insufficient permissions to access this resource"
+            timestamp: "2024-03-15T09:30:00Z"
+            path: "/api/v2/orders"
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: "NOT_FOUND"
+            message: "Order not found"
+            timestamp: "2024-03-15T09:30:00Z"
+            path: "/api/v2/orders/TM-123-NOT-FOUND"
+
+    RateLimited:
+      description: Rate limit exceeded
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: "RATE_LIMITED"
+            message: "Rate limit exceeded. Maximum 1000 requests per minute"
+            timestamp: "2024-03-15T09:30:00Z"
+            path: "/api/v2/orders"
+
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: "INTERNAL_ERROR"
+            message: "An unexpected error occurred"
+            timestamp: "2024-03-15T09:30:00Z"
+            path: "/api/v2/orders"
+
+tags:
+  - name: Orders
+    description: Order management and execution
+  - name: Portfolio
+    description: Portfolio and position management
+  - name: Risk Management
+    description: Risk limits and compliance
+  - name: Market Data
+    description: Real-time market data
+  - name: System
+    description: System health and monitoring

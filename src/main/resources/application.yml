@@ -1,0 +1,543 @@
+server:
+  port: 8083
+  # SSL/TLS Configuration for Production Security
+  ssl:
+    enabled: ${SSL_ENABLED:false}
+    key-store: ${SSL_KEYSTORE_PATH:classpath:keystore/trading-service.p12}
+    key-store-password: ${SSL_KEYSTORE_PASSWORD:trademaster}
+    key-store-type: PKCS12
+    key-alias: trading-service
+    protocol: TLS
+    enabled-protocols: TLSv1.3,TLSv1.2
+    ciphers: >
+      TLS_AES_256_GCM_SHA384,
+      TLS_AES_128_GCM_SHA256,
+      TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+      TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+      TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384,
+      TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256
+    client-auth: ${SSL_CLIENT_AUTH:none}
+  # HTTP/2 Support for better performance
+  http2:
+    enabled: ${HTTP2_ENABLED:true}
+  # Compression for better performance
+  compression:
+    enabled: true
+    mime-types: text/html,text/xml,text/plain,text/css,text/javascript,application/javascript,application/json,application/xml
+    min-response-size: 1024
+
+spring:
+  application:
+    name: trading-service
+  
+  # MANDATORY: Java 24 Virtual Threads Configuration (Rule #1)
+  threads:
+    virtual:
+      enabled: true
+  
+  # Security Configuration
+  security:
+    require-ssl: ${REQUIRE_SSL:false}
+    headers:
+      # HSTS (HTTP Strict Transport Security)
+      content-security-policy: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self'"
+      frame-options: DENY
+      content-type-options: nosniff
+      referrer-policy: strict-origin-when-cross-origin
+    user:
+      name: ${SPRING_SECURITY_USER_NAME:admin}
+      password: ${SPRING_SECURITY_USER_PASSWORD:admin}
+      roles: ADMIN
+  
+  # JPA/Hibernate Configuration for PostgreSQL with Virtual Threads
+  datasource:
+    url: jdbc:postgresql://localhost:5432/trademaster_trading
+    username: ${POSTGRES_USER:trademaster_user}
+    password: ${POSTGRES_PASSWORD:trademaster_pass}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      pool-name: TradingServiceCP
+      maximum-pool-size: 50
+      minimum-idle: 10
+      idle-timeout: 600000
+      connection-timeout: 20000
+      validation-timeout: 5000
+      leak-detection-threshold: 60000
+  
+  # JPA Configuration optimized for Virtual Threads
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: false
+        use_sql_comments: false
+        jdbc:
+          batch_size: 25
+        order_inserts: true
+        order_updates: true
+        cache:
+          use_second_level_cache: true
+          use_query_cache: true
+        connection:
+          handling_mode: delayed_acquisition_and_release_after_transaction
+  
+  # Redis Configuration for caching
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      database: 3  # Different database for trading cache
+      timeout: 5000ms
+      lettuce:
+        pool:
+          max-active: 50
+          max-idle: 25
+          min-idle: 5
+          max-wait: 10s
+  
+  # Flyway Configuration for database migrations
+  flyway:
+    url: jdbc:postgresql://localhost:5432/trademaster_trading
+    user: ${POSTGRES_USER:trademaster_user}
+    password: ${POSTGRES_PASSWORD:trademaster_pass}
+    baseline-on-migrate: true
+    locations: classpath:db/migration
+  
+  # Virtual Threads Configuration
+  threads:
+    virtual:
+      enabled: true
+  
+  # Cloud Configuration
+  cloud:
+    discovery:
+      enabled: true
+      client:
+        health-indicator:
+          enabled: true
+  
+  # Caching Configuration
+  cache:
+    type: redis
+    redis:
+      time-to-live: 300s  # 5 minutes default TTL
+      cache-null-values: false
+
+# Management and Monitoring
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus,readiness,liveness
+      base-path: /actuator
+      path-mapping:
+        health: health
+        info: info
+        readiness: ready
+        liveness: alive
+  endpoint:
+    health:
+      show-details: always
+      show-components: always
+      probes:
+        enabled: true
+      group:
+        readiness:
+          include: readinessState,tradingReadinessIndicator,db,redis
+        liveness:
+          include: livenessState,tradingLivenessIndicator,ping
+    metrics:
+      enabled: true
+    info:
+      enabled: true
+  health:
+    probes:
+      enabled: true
+    readinessstate:
+      enabled: true
+    livenessstate:
+      enabled: true
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+    distribution:
+      percentiles:
+        http.server.requests: 0.5, 0.95, 0.99
+        order.processing: 0.5, 0.95, 0.99
+    tags:
+      service: trading-service
+      environment: ${ENVIRONMENT:local}
+      version: "2.0.0"
+
+# Logging Configuration
+logging:
+  level:
+    com.trademaster.trading: INFO
+    org.springframework.orm.jpa: INFO
+    org.springframework.security: INFO
+    org.hibernate.SQL: WARN
+    org.postgresql: WARN
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level [%X{traceId},%X{spanId}] %logger{36} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level [%X{traceId},%X{spanId}] %logger{36} - %msg%n"
+
+# AgentOS Configuration
+agentos:
+  agent:
+    id: trading-agent
+    type: TRADING
+    capabilities:
+      order-execution:
+        proficiency: EXPERT
+        max-concurrent-requests: 100
+        timeout-ms: 50
+        resource-requirements: ["CPU:high", "Memory:medium"]
+      risk-management:
+        proficiency: ADVANCED
+        max-concurrent-requests: 200
+        timeout-ms: 25
+        resource-requirements: ["CPU:medium", "Memory:low"]
+      broker-routing:
+        proficiency: EXPERT
+        max-concurrent-requests: 150
+        timeout-ms: 100
+        resource-requirements: ["Network:high", "CPU:medium"]
+      position-tracking:
+        proficiency: ADVANCED
+        max-concurrent-requests: 500
+        timeout-ms: 10
+        resource-requirements: ["Memory:medium", "CPU:low"]
+      compliance-check:
+        proficiency: INTERMEDIATE
+        max-concurrent-requests: 100
+        timeout-ms: 200
+        resource-requirements: ["CPU:medium", "Memory:low"]
+    health:
+      check-interval-seconds: 30
+      performance-window-minutes: 5
+      min-health-score: 0.7
+
+# TradeMaster Trading Configuration
+trademaster:
+  trading:
+    # Order Management Configuration
+    orders:
+      max-open-orders-per-user: 1000
+      order-id-prefix: "TM"
+      default-order-validity: "DAY"
+      
+    # Risk Management Configuration
+    risk:
+      enabled: true
+      max-position-value: 10000000  # ₹1 Crore
+      max-single-order-value: 1000000  # ₹10 Lakh
+      max-daily-trades: 500
+      pattern-day-trader-threshold: 25000  # $25K USD equivalent
+      
+    # Performance Configuration
+    performance:
+      order-processing-timeout: 50ms
+      risk-check-timeout: 25ms
+      portfolio-update-timeout: 10ms
+      cache-warming-enabled: true
+      
+    # Broker Integration Configuration
+    brokers:
+      enabled: true
+      timeout: 5s
+      retry-attempts: 3
+      circuit-breaker:
+        failure-threshold: 5
+        timeout: 30s
+        reset-timeout: 60s
+      
+    # Enhanced Broker Auth Service Integration  
+    broker:
+      auth:
+        service:
+          url: http://localhost:8087/api/v1
+          timeout: 5000ms
+          connect-timeout: 2000ms
+          read-timeout: 10000ms
+      default-broker: ZERODHA
+      order-timeout: 5000ms
+    
+    # WebSocket Configuration  
+    websocket:
+      enabled: true
+      max-connections: 10000
+      heartbeat-interval: 30s
+      message-size-limit: 1MB
+
+# JWT Configuration (from Epic 1 auth service)
+jwt:
+  secret: ${JWT_SECRET:your-256-bit-secret-key-here-for-development-only}
+  expiration: 86400000  # 24 hours in milliseconds
+  issuer: trademaster-auth-service
+
+# API Documentation
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: method
+
+# Eureka Service Discovery Configuration
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_URL:http://localhost:8761/eureka/}
+    enabled: true
+    fetch-registry: true
+    register-with-eureka: true
+    registry-fetch-interval-seconds: 30
+    instance-info-replication-interval-seconds: 30
+    eureka-connection-idle-timeout-seconds: 30
+  instance:
+    hostname: ${HOSTNAME:localhost}
+    instance-id: ${spring.application.name}:${server.port}:${random.uuid}
+    prefer-ip-address: true
+    ip-address: ${HOST_IP:127.0.0.1}
+    status-page-url-path: /actuator/info
+    health-check-url-path: /actuator/health
+    lease-renewal-interval-in-seconds: 30
+    lease-expiration-duration-in-seconds: 90
+    metadata-map:
+      "version": "@project.version@"
+      "git-version": "@git.commit.id.describe@"
+      "git-commit": "@git.commit.id.abbrev@"
+      "profile": "${spring.profiles.active:default}"
+      "service-type": "trading"
+      "virtual-threads": "enabled"
+      "java-version": "24"
+
+# Security configuration
+security:
+  jwt:
+    secret: ${JWT_SECRET:your-256-bit-secret-key-here-change-this-in-production}
+    expiration: ${JWT_EXPIRATION:86400000} # 24 hours
+    refresh-expiration: ${JWT_REFRESH_EXPIRATION:604800000} # 7 days
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:8080}
+    allowed-methods: ${CORS_ALLOWED_METHODS:GET,POST,PUT,DELETE,OPTIONS}
+    allowed-headers: ${CORS_ALLOWED_HEADERS:*}
+  audit:
+    enabled: ${SECURITY_AUDIT_ENABLED:true}
+    alert:
+      threshold: ${SECURITY_ALERT_THRESHOLD:10}
+  hardening:
+    rate-limit:
+      enabled: ${RATE_LIMITING_ENABLED:true}
+      max-requests: ${RATE_LIMIT_MAX_REQUESTS:1000}
+      window-size: ${RATE_LIMIT_WINDOW_SIZE:60000}
+    input-validation:
+      enabled: ${INPUT_VALIDATION_ENABLED:true}
+      max-request-size: ${MAX_REQUEST_SIZE:1048576} # 1MB
+    headers:
+      enabled: ${SECURITY_HEADERS_ENABLED:true}
+    firewall:
+      enabled: ${HTTP_FIREWALL_ENABLED:true}
+
+# Circuit Breaker Configuration
+resilience4j:
+  circuitbreaker:
+    instances:
+      broker-auth-service:
+        register-health-indicator: true
+        sliding-window-type: count_based
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 30s
+        permitted-number-of-calls-in-half-open-state: 3
+        automatic-transition-from-open-to-half-open-enabled: true
+      portfolio-service:
+        register-health-indicator: true
+        sliding-window-type: count_based
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 30s
+        permitted-number-of-calls-in-half-open-state: 3
+        automatic-transition-from-open-to-half-open-enabled: true
+      external-market-data:
+        register-health-indicator: true
+        sliding-window-type: count_based
+        sliding-window-size: 15
+        minimum-number-of-calls: 8
+        failure-rate-threshold: 40
+        wait-duration-in-open-state: 45s
+        permitted-number-of-calls-in-half-open-state: 5
+        automatic-transition-from-open-to-half-open-enabled: true
+      database-operations:
+        register-health-indicator: true
+        sliding-window-type: time_based
+        sliding-window-size: 60
+        minimum-number-of-calls: 10
+        failure-rate-threshold: 30
+        wait-duration-in-open-state: 20s
+        permitted-number-of-calls-in-half-open-state: 5
+        automatic-transition-from-open-to-half-open-enabled: true
+  timelimiter:
+    instances:
+      broker-auth-service:
+        timeout-duration: 10s
+      portfolio-service:
+        timeout-duration: 5s
+      external-market-data:
+        timeout-duration: 15s
+      database-operations:
+        timeout-duration: 30s
+  retry:
+    instances:
+      broker-auth-service:
+        max-attempts: 3
+        wait-duration: 1s
+        exponential-backoff-multiplier: 2
+      portfolio-service:
+        max-attempts: 2
+        wait-duration: 500ms
+        exponential-backoff-multiplier: 1.5
+      external-market-data:
+        max-attempts: 4
+        wait-duration: 2s
+        exponential-backoff-multiplier: 2
+  bulkhead:
+    instances:
+      order-processing:
+        max-concurrent-calls: 100
+        max-wait-duration: 5s
+      risk-calculation:
+        max-concurrent-calls: 50
+        max-wait-duration: 3s
+
+---
+# Docker Profile
+spring:
+  config:
+    activate:
+      on-profile: docker
+  datasource:
+    url: jdbc:postgresql://postgres:5432/trademaster_trading
+  data:
+    redis:
+      host: redis
+  flyway:
+    url: jdbc:postgresql://postgres:5432/trademaster_trading
+
+---
+# Test Profile
+spring:
+  config:
+    activate:
+      on-profile: test
+  datasource:
+    url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    driver-class-name: org.h2.Driver
+  data:
+    redis:
+      host: localhost
+      port: 6370  # Different port for test Redis
+  flyway:
+    url: jdbc:h2:mem:testdb
+
+trademaster:
+  trading:
+    risk:
+      enabled: false  # Disable risk checks in tests
+    brokers:
+      enabled: false  # Disable broker integration in tests
+
+---
+# Production Profile with SSL/TLS
+spring:
+  config:
+    activate:
+      on-profile: production
+  security:
+    require-ssl: true
+    headers:
+      content-security-policy: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: https:; connect-src 'self' wss: https:"
+      frame-options: DENY
+      content-type-options: nosniff
+      referrer-policy: strict-origin-when-cross-origin
+
+server:
+  ssl:
+    enabled: true
+    # Production certificate configuration
+    key-store: ${SSL_KEYSTORE_PATH:file:/opt/trademaster/ssl/trading-service.p12}
+    key-store-password: ${SSL_KEYSTORE_PASSWORD}
+    key-store-type: PKCS12
+    key-alias: trading-service
+    protocol: TLS
+    enabled-protocols: TLSv1.3,TLSv1.2
+    client-auth: ${SSL_CLIENT_AUTH:none}
+  http2:
+    enabled: true
+  compression:
+    enabled: true
+
+# Production logging configuration
+logging:
+  level:
+    com.trademaster.trading: INFO
+    org.springframework.security: WARN
+    org.hibernate.SQL: WARN
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level [%X{traceId},%X{spanId}] %logger{36} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level [%X{traceId},%X{spanId}] %logger{36} - %msg%n"
+  file:
+    name: /opt/trademaster/logs/trading-service.log
+    max-size: 100MB
+    max-history: 30
+
+# Production AgentOS configuration
+agentos:
+  agent:
+    health:
+      check-interval-seconds: 15  # More frequent health checks in production
+      performance-window-minutes: 10
+      min-health-score: 0.85  # Higher threshold in production
+
+# Trading Log Aggregation Configuration
+trading:
+  logging:
+    audit-log-path: "./logs/audit"
+    performance-log-path: "./logs/performance" 
+    error-log-path: "./logs/error"
+    application-log-path: "./logs/application"
+    security-log-path: "./logs/security"
+    archive-path: "./logs/archive"
+    # Retention policies (days)
+    audit-retention-days: 2555  # 7 years regulatory compliance
+    performance-retention-days: 30
+    error-retention-days: 90
+    application-retention-days: 7
+    security-retention-days: 365
+    # Aggregation settings
+    enable-structured-logging: true
+    enable-log-aggregation: true
+    max-log-file-size: 100
+    log-level: "INFO"
+
+# Disaster Recovery Configuration
+disaster-recovery:
+  enabled: ${DISASTER_RECOVERY_ENABLED:true}
+  backup:
+    location: ${BACKUP_LOCATION:s3://trademaster-backups/trading-service}
+    retention-days: ${BACKUP_RETENTION_DAYS:30}
+    verification-enabled: ${BACKUP_VERIFICATION_ENABLED:true}
+  recovery:
+    rto-minutes: ${RECOVERY_TIME_OBJECTIVE:15}
+    rpo-minutes: ${RECOVERY_POINT_OBJECTIVE:1}
+    test-schedule: ${RECOVERY_TEST_SCHEDULE:0 0 2 * * SUN} # Sundays 2 AM
+  replication:
+    enabled: ${CROSS_REGION_REPLICATION_ENABLED:true}
+    regions: ${REPLICATION_REGIONS:us-west-2,eu-west-1}
+    lag-threshold-seconds: ${REPLICATION_LAG_THRESHOLD:30}
