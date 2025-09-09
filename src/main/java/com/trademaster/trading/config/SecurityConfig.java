@@ -2,6 +2,7 @@ package com.trademaster.trading.config;
 
 import com.trademaster.trading.security.JwtAuthenticationFilter;
 import com.trademaster.trading.security.JwtAuthenticationEntryPoint;
+import com.trademaster.trading.security.ServiceApiKeyFilter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -10,6 +11,8 @@ import org.springframework.http.HttpMethod;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
+import org.springframework.security.config.annotation.web.configurers.HeadersConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
@@ -45,6 +48,7 @@ public class SecurityConfig {
     
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
     private final JwtAuthenticationEntryPoint jwtAuthenticationEntryPoint;
+    private final ServiceApiKeyFilter serviceApiKeyFilter;
     
     @Value("${server.ssl.enabled:false}")
     private boolean sslEnabled;
@@ -55,7 +59,7 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         HttpSecurity httpSecurity = http
-            .csrf(csrf -> csrf.disable())
+            .csrf(AbstractHttpConfigurer::disable)
             .cors(cors -> cors.configurationSource(corsConfigurationSource()))
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             
@@ -87,7 +91,7 @@ public class SecurityConfig {
                 )
                 
                 // X-Frame-Options
-                .frameOptions(frameOptions -> frameOptions.deny())
+                .frameOptions(HeadersConfigurer.FrameOptionsConfig::deny)
                 
                 // X-Content-Type-Options
                 .contentTypeOptions(Customizer.withDefaults())
@@ -97,12 +101,17 @@ public class SecurityConfig {
             )
             
             .authorizeHttpRequests(auth -> auth
-                // Public endpoints
-                .requestMatchers(HttpMethod.GET, "/actuator/health", "/actuator/info").permitAll()
-                .requestMatchers(HttpMethod.GET, "/actuator/prometheus", "/actuator/metrics").permitAll()
+                // Public endpoints for health checks and monitoring (broad pattern first)
+                .requestMatchers("/actuator/**").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
                 
-                // Trading endpoints require authentication
+                // Allow basic access to root and error pages (for Docker health checks)
+                .requestMatchers("/", "/error", "/favicon.ico").permitAll()
+                
+                // Internal service API endpoints - authenticated by ServiceApiKeyFilter
+                .requestMatchers("/api/internal/**").hasRole("SERVICE")
+                
+                // Trading endpoints require JWT authentication
                 .requestMatchers("/api/v1/orders/**").authenticated()
                 .requestMatchers("/api/v1/portfolio/**").authenticated()
                 .requestMatchers("/api/v1/trades/**").authenticated()
@@ -114,6 +123,7 @@ public class SecurityConfig {
                 .anyRequest().authenticated()
             )
             .exceptionHandling(ex -> ex.authenticationEntryPoint(jwtAuthenticationEntryPoint))
+            .addFilterBefore(serviceApiKeyFilter, UsernamePasswordAuthenticationFilter.class)
             .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
             
         // Require SSL/HTTPS if enabled

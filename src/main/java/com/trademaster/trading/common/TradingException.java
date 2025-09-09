@@ -1,4 +1,4 @@
-package com.trademaster.common.exception;
+package com.trademaster.trading.common;
 
 import java.time.Instant;
 import java.util.Map;

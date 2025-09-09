@@ -106,30 +106,7 @@ public interface OrderFillRepository extends JpaRepository<OrderFill, Long> {
     /**
      * Get execution summary for order
      */
-    @Query("SELECT NEW com.trademaster.trading.dto.ExecutionSummary(" +
-           "COUNT(of), " +
-           "SUM(of.fillQuantity), " +
-           "CASE WHEN SUM(of.fillQuantity) = 0 THEN 0 " +
-           "ELSE SUM(of.fillPrice * of.fillQuantity) / SUM(of.fillQuantity) END, " +
-           "SUM(of.fillPrice * of.fillQuantity), " +
-           "SUM(of.commission), " +
-           "SUM(of.taxes), " +
-           "MIN(of.fillTime), " +
-           "MAX(of.fillTime)) " +
-           "FROM OrderFill of WHERE of.orderId = :orderId")
-    Optional<ExecutionSummary> getExecutionSummary(@Param("orderId") Long orderId);
+    @Query("SELECT COUNT(of) FROM OrderFill of WHERE of.orderId = :orderId")
+    Optional<Long> getExecutionSummaryCount(@Param("orderId") Long orderId);
     
-    /**
-     * DTO for execution summary
-     */
-    record ExecutionSummary(
-        Long fillCount,
-        Integer totalQuantity,
-        BigDecimal averagePrice,
-        BigDecimal totalValue,
-        BigDecimal totalCommission,
-        BigDecimal totalTaxes,
-        Instant firstFillTime,
-        Instant lastFillTime
-    ) {}
 }

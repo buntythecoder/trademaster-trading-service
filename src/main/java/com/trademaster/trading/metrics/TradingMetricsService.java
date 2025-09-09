@@ -5,8 +5,8 @@ import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import io.micrometer.core.instrument.Tags;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
 import jakarta.annotation.PostConstruct;
@@ -32,11 +32,14 @@ import java.util.concurrent.atomic.AtomicReference;
  * @version 1.0.0
  */
 @Service
-@RequiredArgsConstructor
 @Slf4j
 public class TradingMetricsService {
     
     private final MeterRegistry meterRegistry;
+    
+    public TradingMetricsService(@Lazy MeterRegistry meterRegistry) {
+        this.meterRegistry = meterRegistry;
+    }
     
     // Order Processing Metrics
     private Counter ordersPlaced;

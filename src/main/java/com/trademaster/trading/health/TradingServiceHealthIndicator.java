@@ -1,8 +1,8 @@
 package com.trademaster.trading.health;
 
 import com.trademaster.trading.repository.OrderRepository;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.actuate.health.Health;
 import org.springframework.boot.actuate.health.HealthIndicator;
 import org.springframework.data.redis.core.RedisTemplate;
@@ -30,16 +30,22 @@ import java.util.concurrent.TimeUnit;
  * @version 1.0.0
  */
 @Component
-@RequiredArgsConstructor
 @Slf4j
 public class TradingServiceHealthIndicator implements HealthIndicator {
     
     private final DataSource dataSource;
-    private final RedisTemplate<String, Object> redisTemplate;
     private final OrderRepository orderRepository;
+    
+    @Autowired(required = false)
+    private RedisTemplate<String, Object> redisTemplate;
     
     private static final String HEALTH_CHECK_KEY = "trading-service:health:check";
     private static final int HEALTH_CHECK_TIMEOUT_MS = 5000;
+    
+    public TradingServiceHealthIndicator(DataSource dataSource, OrderRepository orderRepository) {
+        this.dataSource = dataSource;
+        this.orderRepository = orderRepository;
+    }
     
     @Override
     public Health health() {
@@ -99,6 +105,11 @@ public class TradingServiceHealthIndicator implements HealthIndicator {
     }
     
     private boolean checkRedis() {
+        if (redisTemplate == null) {
+            log.debug("Redis not configured, skipping Redis health check");
+            return true; // Consider Redis check as passed if not configured
+        }
+        
         try {
             CompletableFuture<Boolean> redisCheck = CompletableFuture.supplyAsync(() -> {
                 try {

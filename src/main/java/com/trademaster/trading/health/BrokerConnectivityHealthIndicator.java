@@ -6,6 +6,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.actuate.health.Health;
 import org.springframework.boot.actuate.health.HealthIndicator;
 import org.springframework.stereotype.Component;
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 
 import java.time.Instant;
 import java.util.Map;
@@ -92,7 +93,7 @@ public class BrokerConnectivityHealthIndicator implements HealthIndicator {
             CompletableFuture<Boolean> brokerCheck = CompletableFuture.supplyAsync(() -> {
                 try {
                     // Use the health endpoint to check broker connectivity
-                    Map<String, Object> healthResponse = brokerAuthClient.getBrokerHealth(brokerName);
+                    Map<String, Object> healthResponse = getBrokerHealthWithCircuitBreaker(brokerName);
                     
                     if (healthResponse != null && healthResponse.containsKey("status")) {
                         String status = (String) healthResponse.get("status");
@@ -113,5 +114,27 @@ public class BrokerConnectivityHealthIndicator implements HealthIndicator {
             log.debug("Broker {} health check timeout: {}", brokerName, e.getMessage());
             return false;
         }
+    }
+    
+    /**
+     * Wrapper method with circuit breaker for broker health checks
+     */
+    @CircuitBreaker(name = "broker-auth-service", fallbackMethod = "getBrokerHealthFallback")
+    private Map<String, Object> getBrokerHealthWithCircuitBreaker(String brokerName) {
+        return brokerAuthClient.getBrokerHealth(brokerName);
+    }
+    
+    /**
+     * Circuit breaker fallback method for getBrokerHealth
+     */
+    public Map<String, Object> getBrokerHealthFallback(String brokerName, Throwable ex) {
+        log.warn("Circuit breaker activated for broker health check - broker: {}, error: {}", 
+                brokerName, ex.getMessage());
+        return Map.of(
+            "status", "UNAVAILABLE",
+            "broker", brokerName,
+            "message", "Circuit breaker active - service degraded",
+            "timestamp", System.currentTimeMillis()
+        );
     }
 }

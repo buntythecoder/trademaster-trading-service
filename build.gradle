@@ -5,6 +5,38 @@ plugins {
     id 'org.flywaydb.flyway' version '10.0.0'
 }
 
+// MANDATORY: Gradle version check for Java 24 compatibility
+task checkGradleVersion {
+    doFirst {
+        def currentVersion = gradle.gradleVersion
+        def requiredVersion = "8.14"
+        
+        if (compareVersions(currentVersion, requiredVersion) < 0) {
+            throw new GradleException(
+                "Java 24 requires Gradle ${requiredVersion}+ but found ${currentVersion}. " +
+                "Please upgrade Gradle wrapper to 8.14+ or 9.0+ for full Java 24 support."
+            )
+        }
+        println "✅ Gradle ${currentVersion} supports Java 24"
+    }
+}
+
+def compareVersions(String version1, String version2) {
+    List<String> parts1 = version1.tokenize('.')
+    List<String> parts2 = version2.tokenize('.')
+    int maxLength = Math.max(parts1.size(), parts2.size())
+    
+    for (int i = 0; i < maxLength; i++) {
+        int v1 = i < parts1.size() ? Integer.parseInt(parts1[i]) : 0
+        int v2 = i < parts2.size() ? Integer.parseInt(parts2[i]) : 0
+        if (v1 != v2) return Integer.compare(v1, v2)
+    }
+    return 0
+}
+
+// Ensure version check runs before compilation
+compileJava.dependsOn checkGradleVersion
+
 java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(24)
@@ -53,9 +85,12 @@ dependencies {
     implementation 'io.jsonwebtoken:jjwt-impl:0.12.3'
     implementation 'io.jsonwebtoken:jjwt-jackson:0.12.3'
     
-    // Service Discovery with Eureka Client
-    implementation 'org.springframework.cloud:spring-cloud-starter-netflix-eureka-client'
+    // Service Discovery and Configuration with Consul
+    implementation 'org.springframework.cloud:spring-cloud-starter-consul-discovery'
+    implementation 'org.springframework.cloud:spring-cloud-starter-consul-config'
     implementation 'org.springframework.cloud:spring-cloud-starter-loadbalancer'
+    
+    // Note: No longer using separate Spring Cloud Config Server
     
     // Circuit Breaker with Resilience4j
     implementation 'org.springframework.cloud:spring-cloud-starter-circuitbreaker-resilience4j'
@@ -70,9 +105,12 @@ dependencies {
     // WebSocket for real-time updates
     implementation 'org.springframework.boot:spring-boot-starter-websocket'
     
-    // HTTP Clients for broker APIs
+    // HTTP Clients for broker APIs - Using OkHttp exclusively for better Virtual Thread compatibility
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
-    implementation 'org.apache.httpcomponents.client5:httpclient5:5.3.1'
+    
+    // Apache HTTP Client 4.x explicitly for Consul compatibility (Spring Cloud Consul requires this)
+    implementation 'org.apache.httpcomponents:httpclient:4.5.14'
+    implementation 'org.apache.httpcomponents:httpcore:4.4.16'
     
     // JSON Processing
     implementation 'com.fasterxml.jackson.core:jackson-databind'
@@ -84,6 +122,7 @@ dependencies {
     
     // Structured Logging
     implementation 'net.logstash.logback:logstash-logback-encoder:7.4'
+    implementation 'org.codehaus.janino:janino:3.1.12'
     
     // Rate Limiting
     implementation 'com.github.vladimir-bukhtoyarov:bucket4j-core:7.6.0'

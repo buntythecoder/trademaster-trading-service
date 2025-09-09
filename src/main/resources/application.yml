@@ -43,6 +43,7 @@ spring:
     virtual:
       enabled: true
   
+  
   # Security Configuration
   security:
     require-ssl: ${REQUIRE_SSL:false}
@@ -63,14 +64,43 @@ spring:
     username: ${DATABASE_USERNAME:trading_user}
     password: ${DATABASE_PASSWORD:trading_pass}
     driver-class-name: org.postgresql.Driver
+    
+    # HikariCP Connection Pool Configuration (applies to all profiles)
     hikari:
+      # Pool naming and size configuration
       pool-name: TradingServiceCP
-      maximum-pool-size: 50
-      minimum-idle: 10
-      idle-timeout: 600000
-      connection-timeout: 20000
-      validation-timeout: 5000
-      leak-detection-threshold: 60000
+      maximum-pool-size: ${HIKARI_MAX_POOL_SIZE:100}        # High concurrency for trading
+      minimum-idle: ${HIKARI_MIN_IDLE:20}                    # Keep connections warm
+      
+      # Connection timeout settings (critical for trading latency)
+      connection-timeout: ${HIKARI_CONNECTION_TIMEOUT:5000}  # 5s max wait for connection
+      idle-timeout: ${HIKARI_IDLE_TIMEOUT:300000}            # 5min idle before cleanup
+      max-lifetime: ${HIKARI_MAX_LIFETIME:1800000}           # 30min max connection age
+      
+      # Performance and monitoring
+      validation-timeout: ${HIKARI_VALIDATION_TIMEOUT:2000}  # 2s validation timeout
+      leak-detection-threshold: ${HIKARI_LEAK_DETECTION:30000} # 30s leak detection
+      
+      # Database-specific optimizations for PostgreSQL
+      data-source-properties:
+        # PostgreSQL connection settings for high performance
+        ApplicationName: TradeMaster-Trading-Service
+        prepareThreshold: 3
+        preparedStatementCacheQueries: 256
+        preparedStatementCacheSizeMiB: 8
+        
+        # Network and socket settings
+        socketTimeout: 10
+        connectTimeout: 5
+        tcpKeepAlive: true
+        
+        # Performance optimizations
+        defaultRowFetchSize: 100
+        autosave: conservative
+        binaryTransfer: true
+        
+        # Connection validation
+        logUnclosedConnections: true
   
   # JPA Configuration optimized for Virtual Threads
   jpa:
@@ -81,13 +111,17 @@ spring:
         dialect: org.hibernate.dialect.PostgreSQLDialect
         format_sql: false
         use_sql_comments: false
+        hbm2ddl:
+          auto: validate
         jdbc:
           batch_size: 25
         order_inserts: true
         order_updates: true
         cache:
-          use_second_level_cache: true
-          use_query_cache: true
+          use_second_level_cache: false
+          use_query_cache: false
+          region:
+            factory_class: org.hibernate.cache.internal.NoCachingRegionFactory
         connection:
           handling_mode: delayed_acquisition_and_release_after_transaction
   
@@ -108,7 +142,7 @@ spring:
   
   # Flyway Configuration for database migrations
   flyway:
-    enabled: ${SPRING_FLYWAY_ENABLED:true}
+    enabled: ${SPRING_FLYWAY_ENABLED:false}
     url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/trademaster_trading}
     user: ${DATABASE_USERNAME:trading_user}
     password: ${DATABASE_PASSWORD:trading_pass}
@@ -143,10 +177,12 @@ spring:
         service-name: ${spring.application.name}
         hostname: ${HOSTNAME:localhost}
         port: ${server.port}
-        health-check-path: /api/v2/health
+        health-check-path: /actuator/health
         health-check-interval: 10s
         health-check-timeout: 3s
         health-check-critical-timeout: 30s
+        # Keep service visible in Consul even when health checks fail
+        deregister-critical-service-after: 90m  # Keep service registered for 90 minutes after failure
         ip-address: ${HOST_IP:127.0.0.1}
         tags:
           - trading-service
@@ -257,6 +293,12 @@ agentos:
 
 # TradeMaster Trading Configuration
 trademaster:
+  # Service-to-Service Security Configuration
+  security:
+    service:
+      enabled: ${SERVICE_AUTH_ENABLED:true}
+      api-key: ${SERVICE_API_KEY:trademaster-service-key-2024-secure}
+      
   trading:
     # Order Management Configuration
     orders:
@@ -516,12 +558,12 @@ agentos:
 # Trading Log Aggregation Configuration
 trading:
   logging:
-    audit-log-path: "./logs/audit"
-    performance-log-path: "./logs/performance" 
-    error-log-path: "./logs/error"
-    application-log-path: "./logs/application"
-    security-log-path: "./logs/security"
-    archive-path: "./logs/archive"
+    audit-log-path: "/app/logs/audit"
+    performance-log-path: "/app/logs/performance" 
+    error-log-path: "/app/logs/error"
+    application-log-path: "/app/logs/application"
+    security-log-path: "/app/logs/security"
+    archive-path: "/app/logs/archive"
     # Retention policies (days)
     audit-retention-days: 2555  # 7 years regulatory compliance
     performance-retention-days: 30

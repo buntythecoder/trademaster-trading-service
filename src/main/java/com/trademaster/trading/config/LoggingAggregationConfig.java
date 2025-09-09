@@ -47,9 +47,9 @@ import java.util.concurrent.CompletableFuture;
  * @author TradeMaster Development Team
  * @version 1.0.0
  */
-@Configuration
+//@Configuration  // Temporarily disabled for service startup
 @EnableConfigurationProperties(LoggingAggregationConfig.LoggingProperties.class)
-@EnableScheduling
+//@EnableScheduling
 @RequiredArgsConstructor
 @Slf4j
 public class LoggingAggregationConfig {
@@ -426,12 +426,12 @@ public class LoggingAggregationConfig {
     @ConfigurationProperties(prefix = "trading.logging")
     public static class LoggingProperties {
         
-        private String auditLogPath = "./logs/audit";
-        private String performanceLogPath = "./logs/performance";
-        private String errorLogPath = "./logs/error";
-        private String applicationLogPath = "./logs/application";
-        private String securityLogPath = "./logs/security";
-        private String archivePath = "./logs/archive";
+        private String auditLogPath = "/app/logs/audit";
+        private String performanceLogPath = "/app/logs/performance";
+        private String errorLogPath = "/app/logs/error";
+        private String applicationLogPath = "/app/logs/application";
+        private String securityLogPath = "/app/logs/security";
+        private String archivePath = "/app/logs/archive";
         
         // Retention policies (in days)
         private int auditRetentionDays = 2555; // 7 years for regulatory compliance

@@ -43,10 +43,13 @@ import org.springframework.cloud.openfeign.EnableFeignClients;
  * @version 2.0.0 (Java 24 + Virtual Threads)
  * @since 2025-08-21
  */
-@SpringBootApplication
+@SpringBootApplication(exclude = {
+    org.springframework.boot.autoconfigure.liquibase.LiquibaseAutoConfiguration.class,
+    org.springframework.boot.autoconfigure.web.client.RestClientAutoConfiguration.class
+})
 @EnableConfigurationProperties(JwtConfigurationProperties.class)
 @EnableCaching
-@EnableJpaRepositories
+@EnableJpaRepositories(basePackages = "com.trademaster.trading.repository")
 @EnableJpaAuditing
 @EnableKafka
 @EnableAsync

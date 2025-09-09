@@ -53,7 +53,6 @@ import java.util.stream.Collectors;
  * @version 2.0.0 (Java 24 + Virtual Threads)
  */
 @Service
-@RequiredArgsConstructor
 @Slf4j
 public class OrderServiceImpl implements OrderService {
     
@@ -64,9 +63,26 @@ public class OrderServiceImpl implements OrderService {
     private final BrokerAuthClient brokerAuthClient;
     private final TradingMetricsService metricsService;
     private final AlertingService alertingService;
+    private final AsyncTaskExecutor orderProcessingExecutor;
     
-    @Qualifier("tradingExecutor")
-    private final AsyncTaskExecutor tradingExecutor;
+    public OrderServiceImpl(
+            OrderRepository orderRepository,
+            List<OrderValidator> validators,
+            OrderRouter orderRouter,
+            TradingEventPublisher eventPublisher,
+            BrokerAuthClient brokerAuthClient,
+            TradingMetricsService metricsService,
+            AlertingService alertingService,
+            @Qualifier("orderProcessingExecutor") AsyncTaskExecutor orderProcessingExecutor) {
+        this.orderRepository = orderRepository;
+        this.validators = validators;
+        this.orderRouter = orderRouter;
+        this.eventPublisher = eventPublisher;
+        this.brokerAuthClient = brokerAuthClient;
+        this.metricsService = metricsService;
+        this.alertingService = alertingService;
+        this.orderProcessingExecutor = orderProcessingExecutor;
+    }
     
     // Circuit breaker names for monitoring
     private static final String BROKER_AUTH_CB = "broker-auth-service";
@@ -576,7 +592,7 @@ public class OrderServiceImpl implements OrderService {
                          correlationId, order.getOrderId(), e.getMessage());
                 throw new RuntimeException("Broker submission failed: " + e.getMessage(), e);
             }
-        }, tradingExecutor);
+        }, orderProcessingExecutor);
     }
     
     @CircuitBreaker(name = BROKER_AUTH_CB, fallbackMethod = "modifyOrderWithBrokerFallback")
@@ -607,7 +623,7 @@ public class OrderServiceImpl implements OrderService {
                          correlationId, order.getOrderId(), e.getMessage());
                 throw new RuntimeException("Broker modification failed: " + e.getMessage(), e);
             }
-        }, tradingExecutor);
+        }, orderProcessingExecutor);
     }
     
     @CircuitBreaker(name = BROKER_AUTH_CB, fallbackMethod = "cancelOrderWithBrokerFallback")
@@ -625,7 +641,7 @@ public class OrderServiceImpl implements OrderService {
                          correlationId, order.getOrderId(), e.getMessage());
                 throw new RuntimeException("Broker cancellation failed: " + e.getMessage(), e);
             }
-        }, tradingExecutor);
+        }, orderProcessingExecutor);
     }
     
     private void updateOrderFromModificationRequest(Order order, OrderRequest modificationRequest) {
@@ -683,6 +699,6 @@ public class OrderServiceImpl implements OrderService {
         return CompletableFuture.runAsync(() -> {
             // Mark order as cancellation pending - could be handled by a retry mechanism
             log.info("Order marked for cancellation retry when broker service is available - orderId: {}", order.getOrderId());
-        }, tradingExecutor);
+        }, orderProcessingExecutor);
     }
 }

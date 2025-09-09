@@ -65,7 +65,7 @@ public interface PositionRepository extends JpaRepository<Position, Long> {
     /**
      * Find positions updated after timestamp
      */
-    @Query("SELECT p FROM Position p WHERE p.userId = :userId AND p.lastUpdated > :since")
+    @Query("SELECT p FROM Position p WHERE p.userId = :userId AND p.updatedAt > :since")
     List<Position> findPositionsUpdatedSince(@Param("userId") Long userId, @Param("since") Instant since);
     
     /**
@@ -109,19 +109,19 @@ public interface PositionRepository extends JpaRepository<Position, Long> {
     /**
      * Find positions needing rebalancing (high allocation percentage)
      */
-    @Query("SELECT p FROM Position p WHERE p.userId = :userId AND p.allocationPercent > :threshold")
+    @Query("SELECT p FROM Position p WHERE p.userId = :userId AND p.portfolioWeight > :threshold")
     List<Position> findPositionsNeedingRebalancing(@Param("userId") Long userId, @Param("threshold") BigDecimal threshold);
     
     /**
      * Get average entry price for symbol across all users
      */
-    @Query("SELECT AVG(p.averagePrice) FROM Position p WHERE p.symbol = :symbol AND p.quantity != 0")
+    @Query("SELECT AVG(p.averageCost) FROM Position p WHERE p.symbol = :symbol AND p.quantity != 0")
     Optional<BigDecimal> getAverageEntryPriceForSymbol(@Param("symbol") String symbol);
     
     /**
      * Find positions opened within date range
      */
-    @Query("SELECT p FROM Position p WHERE p.userId = :userId AND p.openedAt BETWEEN :startDate AND :endDate")
+    @Query("SELECT p FROM Position p WHERE p.userId = :userId AND p.createdAt BETWEEN :startDate AND :endDate")
     List<Position> findPositionsOpenedBetween(@Param("userId") Long userId,
                                             @Param("startDate") Instant startDate,
                                             @Param("endDate") Instant endDate);
@@ -129,6 +129,6 @@ public interface PositionRepository extends JpaRepository<Position, Long> {
     /**
      * Delete closed positions (zero quantity) older than specified date
      */
-    @Query("DELETE FROM Position p WHERE p.quantity = 0 AND p.lastUpdated < :cutoffDate")
+    @Query("DELETE FROM Position p WHERE p.quantity = 0 AND p.updatedAt < :cutoffDate")
     void deleteClosedPositionsOlderThan(@Param("cutoffDate") Instant cutoffDate);
 }

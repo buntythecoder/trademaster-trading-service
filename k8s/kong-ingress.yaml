@@ -1,0 +1,317 @@
+# Kong Ingress Controller Configuration for TradeMaster Trading Service
+# Compatible with Kong Ingress Controller 2.x
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: trademaster-trading-ingress
+  namespace: trademaster
+  annotations:
+    # Kong Ingress Controller
+    kubernetes.io/ingress.class: kong
+    konghq.com/strip-path: "false"
+    konghq.com/preserve-host: "false"
+    
+    # SSL/TLS Configuration
+    cert-manager.io/cluster-issuer: letsencrypt-production
+    konghq.com/protocols: https,http
+    konghq.com/https-redirect-status-code: "301"
+    
+    # Health Check Configuration
+    konghq.com/path: /api/v2/health
+    
+    # Rate Limiting
+    konghq.com/plugins: trading-rate-limit,trading-cors,trading-jwt,trading-prometheus
+    
+    # Request/Response Configuration
+    konghq.com/request-buffering: "true"
+    konghq.com/response-buffering: "true"
+    
+  labels:
+    app: trademaster-trading-service
+    version: v2
+    environment: production
+spec:
+  tls:
+    - hosts:
+        - api.trademaster.com
+        - staging-api.trademaster.com
+      secretName: trademaster-tls-secret
+  rules:
+    - host: api.trademaster.com
+      http:
+        paths:
+          - path: /trading/v2
+            pathType: Prefix
+            backend:
+              service:
+                name: trading-service
+                port:
+                  number: 8083
+    - host: staging-api.trademaster.com
+      http:
+        paths:
+          - path: /trading/v2
+            pathType: Prefix
+            backend:
+              service:
+                name: trading-service
+                port:
+                  number: 8083
+
+---
+# Kong Plugin: Rate Limiting for Trading Service
+apiVersion: configuration.konghq.com/v1
+kind: KongPlugin
+metadata:
+  name: trading-rate-limit
+  namespace: trademaster
+  labels:
+    app: trademaster-trading-service
+plugin: rate-limiting
+config:
+  minute: 1000
+  hour: 50000
+  day: 1000000
+  policy: local
+  fault_tolerant: true
+  hide_client_headers: false
+  header_name: X-RateLimit-Limit
+  limit_by: consumer
+
+---
+# Kong Plugin: CORS for Trading Service
+apiVersion: configuration.konghq.com/v1
+kind: KongPlugin
+metadata:
+  name: trading-cors
+  namespace: trademaster
+  labels:
+    app: trademaster-trading-service
+plugin: cors
+config:
+  origins:
+    - "https://app.trademaster.com"
+    - "https://admin.trademaster.com"
+    - "https://staging.trademaster.com"
+  methods:
+    - GET
+    - POST
+    - PUT
+    - DELETE
+    - OPTIONS
+    - HEAD
+  headers:
+    - Accept
+    - Accept-Version
+    - Content-Length
+    - Content-Type
+    - Date
+    - Authorization
+    - X-Auth-Token
+    - X-Correlation-ID
+  exposed_headers:
+    - X-Auth-Token
+    - X-Correlation-ID
+    - X-Order-ID
+    - X-RateLimit-Limit
+    - X-RateLimit-Remaining
+  credentials: true
+  max_age: 3600
+  preflight_continue: false
+
+---
+# Kong Plugin: JWT Authentication
+apiVersion: configuration.konghq.com/v1
+kind: KongPlugin
+metadata:
+  name: trading-jwt
+  namespace: trademaster
+  labels:
+    app: trademaster-trading-service
+plugin: jwt
+config:
+  uri_param_names:
+    - jwt
+  cookie_names:
+    - jwt
+  header_names:
+    - authorization
+  claims_to_verify:
+    - exp
+    - iat
+  key_claim_name: iss
+  secret_is_base64: false
+  anonymous: false
+  run_on_preflight: true
+
+---
+# Kong Plugin: Prometheus Metrics
+apiVersion: configuration.konghq.com/v1
+kind: KongPlugin
+metadata:
+  name: trading-prometheus
+  namespace: trademaster
+  labels:
+    app: trademaster-trading-service
+plugin: prometheus
+config:
+  per_consumer: true
+  status_code_metrics: true
+  latency_metrics: true
+  bandwidth_metrics: true
+  upstream_health_metrics: true
+
+---
+# Kong Plugin: Request Size Limiting
+apiVersion: configuration.konghq.com/v1
+kind: KongPlugin
+metadata:
+  name: trading-request-size-limit
+  namespace: trademaster
+  labels:
+    app: trademaster-trading-service
+plugin: request-size-limiting
+config:
+  allowed_payload_size: 1024  # 1KB for trading requests
+
+---
+# Kong Plugin: Correlation ID
+apiVersion: configuration.konghq.com/v1
+kind: KongPlugin
+metadata:
+  name: trading-correlation-id
+  namespace: trademaster
+  labels:
+    app: trademaster-trading-service
+plugin: correlation-id
+config:
+  header_name: X-Correlation-ID
+  generator: uuid
+  echo_downstream: true
+
+---
+# Kong Consumer: Trading Application
+apiVersion: configuration.konghq.com/v1
+kind: KongConsumer
+metadata:
+  name: trademaster-app
+  namespace: trademaster
+  annotations:
+    kubernetes.io/ingress.class: kong
+  labels:
+    app: trademaster-trading-service
+username: trademaster-app
+custom_id: app-001
+
+---
+# Kong Consumer: Admin Application
+apiVersion: configuration.konghq.com/v1
+kind: KongConsumer
+metadata:
+  name: trademaster-admin
+  namespace: trademaster
+  annotations:
+    kubernetes.io/ingress.class: kong
+  labels:
+    app: trademaster-trading-service
+username: trademaster-admin
+custom_id: admin-001
+
+---
+# Secret: JWT Credentials for Application
+apiVersion: v1
+kind: Secret
+metadata:
+  name: trademaster-app-jwt
+  namespace: trademaster
+  labels:
+    app: trademaster-trading-service
+type: Opaque
+stringData:
+  kongCredType: jwt
+  key: trademaster-app-key
+  algorithm: HS256
+  secret: "${TRADEMASTER_JWT_SECRET}"  # Replace with actual secret
+
+---
+# Secret: JWT Credentials for Admin
+apiVersion: v1
+kind: Secret
+metadata:
+  name: trademaster-admin-jwt
+  namespace: trademaster
+  labels:
+    app: trademaster-trading-service
+type: Opaque
+stringData:
+  kongCredType: jwt
+  key: trademaster-admin-key
+  algorithm: HS256
+  secret: "${TRADEMASTER_ADMIN_JWT_SECRET}"  # Replace with actual secret
+
+---
+# Kong Upstream: Trading Service Health Checks
+apiVersion: configuration.konghq.com/v1
+kind: KongUpstreamPolicy
+metadata:
+  name: trading-service-upstream
+  namespace: trademaster
+  labels:
+    app: trademaster-trading-service
+spec:
+  algorithm: round-robin
+  hash_on: none
+  hash_fallback: none
+  healthchecks:
+    active:
+      type: http
+      timeout: 5
+      concurrency: 5
+      http_path: /api/v2/health
+      https_verify_certificate: false
+      healthy:
+        interval: 5
+        http_statuses: [200, 201, 202, 204]
+        successes: 3
+      unhealthy:
+        interval: 5
+        http_statuses: [429, 500, 502, 503, 504]
+        tcp_failures: 3
+        http_failures: 3
+        timeouts: 3
+    passive:
+      type: http
+      healthy:
+        http_statuses: [200, 201, 202, 204, 301, 302, 401, 403, 404]
+        successes: 3
+      unhealthy:
+        http_statuses: [429, 500, 502, 503, 504]
+        tcp_failures: 3
+        http_failures: 3
+        timeouts: 3
+    threshold: 0
+
+---
+# Service Monitor for Prometheus (Kong Metrics)
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: kong-trading-service-metrics
+  namespace: trademaster
+  labels:
+    app: trademaster-trading-service
+    component: kong-gateway
+spec:
+  selector:
+    matchLabels:
+      app: kong-ingress-controller
+  endpoints:
+    - port: kong-admin
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+  namespaceSelector:
+    matchNames:
+      - trademaster
+      - kong-system

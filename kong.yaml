@@ -1,0 +1,474 @@
+# Kong Gateway Configuration for TradeMaster Trading Service
+# Compatible with Kong Gateway 3.x and Kong Ingress Controller
+
+_format_version: "3.0"
+
+# ==================== SERVICES ====================
+services:
+  - name: trademaster-trading-service
+    protocol: http
+    host: trading-service
+    port: 8083
+    path: /api/v2
+    retries: 3
+    connect_timeout: 10000
+    write_timeout: 30000
+    read_timeout: 30000
+    tags:
+      - trademaster
+      - trading
+      - production
+
+# ==================== UPSTREAMS ====================
+upstreams:
+  - name: trading-service-upstream
+    algorithm: round-robin
+    hash_on: none
+    hash_fallback: none
+    hash_on_cookie_path: /
+    slots: 10000
+    healthchecks:
+      active:
+        type: http
+        timeout: 5
+        concurrency: 5
+        http_path: /api/v2/health
+        https_verify_certificate: false
+        healthy:
+          interval: 5
+          http_statuses: [200, 201, 202, 204]
+          successes: 3
+        unhealthy:
+          interval: 5
+          http_statuses: [429, 500, 502, 503, 504]
+          tcp_failures: 3
+          http_failures: 3
+          timeouts: 3
+      passive:
+        type: http
+        healthy:
+          http_statuses: [200, 201, 202, 204, 301, 302, 401, 403, 404]
+          successes: 3
+        unhealthy:
+          http_statuses: [429, 500, 502, 503, 504]
+          tcp_failures: 3
+          http_failures: 3
+          timeouts: 3
+      threshold: 0
+    tags:
+      - trademaster
+      - trading
+    targets:
+      - target: trading-service:8083
+        weight: 100
+        tags:
+          - primary
+
+# ==================== ROUTES ====================
+routes:
+  # Main Trading API Routes
+  - name: trading-api-orders
+    service: trademaster-trading-service
+    protocols: [http, https]
+    methods: [GET, POST, PUT, DELETE, OPTIONS]
+    paths: ["/orders", "/orders/.*"]
+    preserve_host: false
+    strip_path: false
+    tags:
+      - orders
+      - trading
+
+  - name: trading-api-portfolio
+    service: trademaster-trading-service
+    protocols: [http, https]
+    methods: [GET, POST, OPTIONS]
+    paths: ["/portfolio", "/portfolio/.*"]
+    preserve_host: false
+    strip_path: false
+    tags:
+      - portfolio
+      - trading
+
+  - name: trading-api-risk
+    service: trademaster-trading-service
+    protocols: [http, https]
+    methods: [GET, POST, OPTIONS]
+    paths: ["/risk", "/risk/.*"]
+    preserve_host: false
+    strip_path: false
+    tags:
+      - risk
+      - trading
+
+  - name: trading-api-market-data
+    service: trademaster-trading-service
+    protocols: [http, https]
+    methods: [GET, OPTIONS]
+    paths: ["/market", "/market/.*"]
+    preserve_host: false
+    strip_path: false
+    tags:
+      - market-data
+      - trading
+
+  # Health Check Routes (Public)
+  - name: trading-health-check
+    service: trademaster-trading-service
+    protocols: [http, https]
+    methods: [GET, OPTIONS]
+    paths: ["/health", "/gateway/health", "/gateway/ready", "/gateway/alive", "/gateway/status"]
+    preserve_host: false
+    strip_path: false
+    tags:
+      - health
+      - monitoring
+
+  # Admin Routes (Restricted)
+  - name: trading-admin
+    service: trademaster-trading-service
+    protocols: [http, https]
+    methods: [GET, POST, OPTIONS]
+    paths: ["/admin", "/admin/.*"]
+    preserve_host: false
+    strip_path: false
+    tags:
+      - admin
+      - restricted
+
+# ==================== PLUGINS ====================
+plugins:
+  # CORS Plugin (Global)
+  - name: cors
+    config:
+      origins:
+        - "https://app.trademaster.com"
+        - "https://admin.trademaster.com"
+        - "http://localhost:3000"  # Development
+        - "http://localhost:8080"  # Development
+      methods:
+        - GET
+        - POST
+        - PUT
+        - DELETE
+        - OPTIONS
+        - HEAD
+      headers:
+        - Accept
+        - Accept-Version
+        - Content-Length
+        - Content-MD5
+        - Content-Type
+        - Date
+        - Authorization
+        - X-Auth-Token
+        - X-Correlation-ID
+      exposed_headers:
+        - X-Auth-Token
+        - X-Correlation-ID
+        - X-Order-ID
+        - X-RateLimit-Limit
+        - X-RateLimit-Remaining
+      credentials: true
+      max_age: 3600
+      preflight_continue: false
+    tags:
+      - cors
+      - global
+
+  # Rate Limiting Plugin (Global)
+  - name: rate-limiting
+    config:
+      minute: 1000
+      hour: 50000
+      day: 1000000
+      month: 25000000
+      year: 300000000
+      policy: local
+      fault_tolerant: true
+      hide_client_headers: false
+      header_name: X-RateLimit-Limit
+      limit_by: consumer
+    tags:
+      - rate-limiting
+      - global
+
+  # Request ID Plugin
+  - name: correlation-id
+    config:
+      header_name: X-Correlation-ID
+      generator: uuid
+      echo_downstream: true
+    tags:
+      - correlation
+      - tracing
+
+  # Prometheus Metrics Plugin
+  - name: prometheus
+    config:
+      per_consumer: true
+      status_code_metrics: true
+      latency_metrics: true
+      bandwidth_metrics: true
+      upstream_health_metrics: true
+    tags:
+      - metrics
+      - monitoring
+
+  # Request Logging Plugin
+  - name: http-log
+    config:
+      http_endpoint: "http://log-aggregator:8080/kong-logs"
+      method: POST
+      timeout: 1000
+      keepalive: 1000
+      content_type: application/json
+      flush_timeout: 2
+      retry_count: 3
+      queue_size: 100
+    tags:
+      - logging
+      - audit
+
+  # JWT Authentication Plugin (Applied to trading routes)
+  - name: jwt
+    route: trading-api-orders
+    config:
+      uri_param_names:
+        - jwt
+      cookie_names:
+        - jwt
+      header_names:
+        - authorization
+      claims_to_verify:
+        - exp
+        - iat
+      key_claim_name: iss
+      secret_is_base64: false
+      anonymous: false
+      run_on_preflight: true
+    tags:
+      - auth
+      - jwt
+
+  - name: jwt
+    route: trading-api-portfolio
+    config:
+      uri_param_names:
+        - jwt
+      cookie_names:
+        - jwt
+      header_names:
+        - authorization
+      claims_to_verify:
+        - exp
+        - iat
+      key_claim_name: iss
+      secret_is_base64: false
+      anonymous: false
+      run_on_preflight: true
+    tags:
+      - auth
+      - jwt
+
+  - name: jwt
+    route: trading-api-risk
+    config:
+      uri_param_names:
+        - jwt
+      cookie_names:
+        - jwt
+      header_names:
+        - authorization
+      claims_to_verify:
+        - exp
+        - iat
+      key_claim_name: iss
+      secret_is_base64: false
+      anonymous: false
+      run_on_preflight: true
+    tags:
+      - auth
+      - jwt
+
+  - name: jwt
+    route: trading-api-market-data
+    config:
+      uri_param_names:
+        - jwt
+      cookie_names:
+        - jwt
+      header_names:
+        - authorization
+      claims_to_verify:
+        - exp
+        - iat
+      key_claim_name: iss
+      secret_is_base64: false
+      anonymous: false
+      run_on_preflight: true
+    tags:
+      - auth
+      - jwt
+
+  # Enhanced Rate Limiting for Order Placement
+  - name: rate-limiting
+    route: trading-api-orders
+    config:
+      minute: 100      # 100 orders per minute per user
+      hour: 2000       # 2000 orders per hour per user
+      day: 10000       # 10000 orders per day per user
+      policy: local
+      fault_tolerant: true
+      hide_client_headers: false
+      limit_by: consumer
+    tags:
+      - rate-limiting
+      - orders
+
+  # Response Rate Limiting (Circuit Breaker)
+  - name: response-ratelimiting
+    route: trading-api-orders
+    config:
+      limits:
+        video:
+          minute: 10
+          hour: 100
+      block_on_first_violation: false
+      fault_tolerant: true
+      hide_client_headers: false
+    tags:
+      - response-rate-limiting
+      - circuit-breaker
+
+  # Request Size Limiting
+  - name: request-size-limiting
+    config:
+      allowed_payload_size: 1024  # 1KB for trading requests
+    tags:
+      - request-size
+      - security
+
+  # Admin Authentication (Admin routes only)
+  - name: key-auth
+    route: trading-admin
+    config:
+      key_names:
+        - X-API-Key
+        - api-key
+      key_in_header: true
+      key_in_query: false
+      key_in_body: false
+      hide_credentials: true
+      anonymous: false
+      run_on_preflight: true
+    tags:
+      - auth
+      - admin
+
+  # IP Restriction for Admin
+  - name: ip-restriction
+    route: trading-admin
+    config:
+      allow:
+        - "10.0.0.0/8"      # Internal network
+        - "172.16.0.0/12"   # Docker networks
+        - "192.168.0.0/16"  # Private networks
+        - "127.0.0.1"       # Localhost
+      deny: []
+      message: "Access denied from this IP"
+    tags:
+      - ip-restriction
+      - admin
+      - security
+
+  # Request Termination for Health Checks (Optimization)
+  - name: request-termination
+    route: trading-health-check
+    config:
+      status_code: 200
+      content_type: application/json
+      body: '{"status":"UP","service":"trading-service","version":"2.0.0","timestamp":"{{ now }}"}'
+      echo: false
+      trigger: null
+    tags:
+      - optimization
+      - health
+
+# ==================== CONSUMERS ====================
+consumers:
+  - username: trademaster-app
+    custom_id: app-001
+    tags:
+      - application
+      - frontend
+
+  - username: trademaster-admin
+    custom_id: admin-001
+    tags:
+      - admin
+      - backend
+
+  - username: trademaster-monitor
+    custom_id: monitor-001
+    tags:
+      - monitoring
+      - system
+
+# ==================== CONSUMER CREDENTIALS ====================
+jwt_secrets:
+  - consumer: trademaster-app
+    key: trademaster-app-key
+    algorithm: HS256
+    secret: "${TRADEMASTER_JWT_SECRET}"
+    tags:
+      - jwt-secret
+      - app
+
+  - consumer: trademaster-admin
+    key: trademaster-admin-key
+    algorithm: HS256
+    secret: "${TRADEMASTER_ADMIN_JWT_SECRET}"
+    tags:
+      - jwt-secret
+      - admin
+
+keyauth_credentials:
+  - consumer: trademaster-admin
+    key: "${TRADEMASTER_ADMIN_API_KEY}"
+    tags:
+      - api-key
+      - admin
+
+  - consumer: trademaster-monitor
+    key: "${TRADEMASTER_MONITOR_API_KEY}"
+    tags:
+      - api-key
+      - monitor
+
+# ==================== CERTIFICATES (HTTPS) ====================
+certificates:
+  - cert: |
+      -----BEGIN CERTIFICATE-----
+      # Your SSL certificate here
+      -----END CERTIFICATE-----
+    key: |
+      -----BEGIN PRIVATE KEY-----
+      # Your private key here
+      -----END PRIVATE KEY-----
+    tags:
+      - ssl
+      - https
+
+# ==================== SNIs ====================
+snis:
+  - name: api.trademaster.com
+    certificate: certificates[0]
+    tags:
+      - domain
+      - production
+
+  - name: staging-api.trademaster.com
+    certificate: certificates[0]
+    tags:
+      - domain
+      - staging

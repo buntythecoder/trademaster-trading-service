@@ -8,8 +8,11 @@ import com.trademaster.trading.dto.OrderResponse;
 import com.trademaster.trading.model.OrderStatus;
 import com.trademaster.trading.security.TradingUserPrincipal;
 import com.trademaster.trading.service.OrderService;
-import io.swagger.v3.oas.annotations.Operation;
-import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.*;
+import io.swagger.v3.oas.annotations.enums.ParameterIn;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.ExampleObject;
+import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
@@ -27,6 +30,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Function;
@@ -54,7 +58,7 @@ import jakarta.servlet.http.HttpServletRequest;
  * @version 2.0.0 (Java 24 + Virtual Threads)
  */
 @RestController
-@RequestMapping("/api/v1/orders")
+@RequestMapping("/api/v2/orders")
 @RequiredArgsConstructor
 @Validated
 @Slf4j
@@ -68,19 +72,60 @@ public class TradingController {
      * Place a new order (Blocking I/O with Virtual Threads)
      */
     @PostMapping
-    @Operation(summary = "Place new order", 
-               description = "Submit a new trading order with validation and risk checks")
+    @Operation(
+        summary = "Place new order",
+        description = "Submit a new trading order with comprehensive validation, risk checks, and position management",
+        tags = {"Orders"},
+        requestBody = @io.swagger.v3.oas.annotations.parameters.RequestBody(
+            description = "Order details including symbol, side, quantity, price, and order type",
+            required = true,
+            content = @Content(
+                mediaType = "application/json",
+                schema = @Schema(implementation = OrderRequest.class),
+                examples = {
+                    @ExampleObject(
+                        name = "Market Buy Order",
+                        description = "Simple market buy order for 100 shares",
+                        value = "{\"symbol\":\"AAPL\",\"side\":\"BUY\",\"quantity\":100,\"orderType\":\"MARKET\"}"
+                    ),
+                    @ExampleObject(
+                        name = "Limit Sell Order",
+                        description = "Limit sell order with specific price",
+                        value = "{\"symbol\":\"TSLA\",\"side\":\"SELL\",\"quantity\":50,\"orderType\":\"LIMIT\",\"limitPrice\":250.00}"
+                    )
+                }
+            )
+        )
+    )
     @ApiResponses({
-        @ApiResponse(responseCode = "201", description = "Order placed successfully"),
-        @ApiResponse(responseCode = "400", description = "Invalid order request"),
-        @ApiResponse(responseCode = "401", description = "Authentication required"),
+        @ApiResponse(
+            responseCode = "201",
+            description = "Order placed successfully",
+            content = @Content(
+                mediaType = "application/json",
+                schema = @Schema(implementation = OrderResponse.class),
+                examples = @ExampleObject(
+                    name = "Successful Order Response",
+                    value = "{\"orderId\":\"ORD-12345\",\"status\":\"ACKNOWLEDGED\",\"symbol\":\"AAPL\",\"side\":\"BUY\",\"quantity\":100,\"filledQuantity\":0,\"avgPrice\":null,\"timestamp\":\"2024-01-15T10:30:00Z\"}"
+                )
+            )
+        ),
+        @ApiResponse(
+            responseCode = "400",
+            description = "Invalid order request - validation failed",
+            content = @Content(
+                mediaType = "application/json",
+                schema = @Schema(implementation = ErrorResponse.class)
+            )
+        ),
+        @ApiResponse(responseCode = "401", description = "Authentication required - invalid or missing JWT token"),
         @ApiResponse(responseCode = "403", description = "Insufficient permissions or risk check failed"),
-        @ApiResponse(responseCode = "429", description = "Rate limit exceeded")
+        @ApiResponse(responseCode = "429", description = "Rate limit exceeded - too many requests")
     })
     public ResponseEntity<?> placeOrder(
-            @Valid @RequestBody OrderRequest orderRequest,
-            @AuthenticationPrincipal TradingUserPrincipal principal,
-            HttpServletRequest request) {
+            @Parameter(hidden = true) @Valid @RequestBody OrderRequest orderRequest,
+            @Parameter(hidden = true) @AuthenticationPrincipal TradingUserPrincipal principal,
+            @Parameter(hidden = true) HttpServletRequest request) {
         
         Long userId = principal.getUserId();
         
@@ -132,18 +177,34 @@ public class TradingController {
      * Get order by ID (High-performance lookup)
      */
     @GetMapping("/{orderId}")
-    @Operation(summary = "Get order details", 
-               description = "Retrieve detailed information about a specific order")
+    @Operation(
+        summary = "Get order details",
+        description = "Retrieve comprehensive information about a specific order including status, fills, and timestamps",
+        tags = {"Orders"}
+    )
     @ApiResponses({
-        @ApiResponse(responseCode = "200", description = "Order found"),
-        @ApiResponse(responseCode = "404", description = "Order not found"),
-        @ApiResponse(responseCode = "401", description = "Authentication required"),
-        @ApiResponse(responseCode = "403", description = "Access denied")
+        @ApiResponse(
+            responseCode = "200",
+            description = "Order found and returned successfully",
+            content = @Content(
+                mediaType = "application/json",
+                schema = @Schema(implementation = OrderResponse.class)
+            )
+        ),
+        @ApiResponse(responseCode = "404", description = "Order not found or not accessible to user"),
+        @ApiResponse(responseCode = "401", description = "Authentication required - invalid JWT token"),
+        @ApiResponse(responseCode = "403", description = "Access denied - order belongs to another user")
     })
     public ResponseEntity<?> getOrder(
-            @PathVariable String orderId,
-            @AuthenticationPrincipal TradingUserPrincipal principal,
-            HttpServletRequest request) {
+            @Parameter(
+                name = "orderId",
+                description = "Unique order identifier",
+                required = true,
+                example = "ORD-12345678",
+                in = ParameterIn.PATH
+            ) @PathVariable String orderId,
+            @Parameter(hidden = true) @AuthenticationPrincipal TradingUserPrincipal principal,
+            @Parameter(hidden = true) HttpServletRequest request) {
         
         Long userId = principal.getUserId();
         
@@ -176,22 +237,49 @@ public class TradingController {
      * Get user's order history (Paginated with Virtual Threads)
      */
     @GetMapping
-    @Operation(summary = "Get order history", 
-               description = "Retrieve paginated list of user's orders")
+    @Operation(
+        summary = "Get order history",
+        description = "Retrieve paginated list of user's historical and current orders with optional filtering",
+        tags = {"Orders"}
+    )
     @ApiResponses({
-        @ApiResponse(responseCode = "200", description = "Orders retrieved successfully"),
-        @ApiResponse(responseCode = "401", description = "Authentication required")
+        @ApiResponse(
+            responseCode = "200",
+            description = "Orders retrieved successfully",
+            content = @Content(
+                mediaType = "application/json",
+                schema = @Schema(type = "array", implementation = OrderResponse.class)
+            )
+        ),
+        @ApiResponse(responseCode = "401", description = "Authentication required - invalid JWT token")
     })
     public List<OrderResponse> getOrderHistory(
-            @Parameter(description = "Page number (0-based)") 
-            @RequestParam(defaultValue = "0") int page,
-            @Parameter(description = "Page size (max 100)") 
-            @RequestParam(defaultValue = "20") int size,
-            @Parameter(description = "Filter by order status") 
-            @RequestParam(required = false) OrderStatus status,
-            @Parameter(description = "Filter by symbol") 
-            @RequestParam(required = false) String symbol,
-            @AuthenticationPrincipal TradingUserPrincipal principal) {
+            @Parameter(
+                name = "page",
+                description = "Page number for pagination (0-based)",
+                example = "0",
+                in = ParameterIn.QUERY
+            ) @RequestParam(defaultValue = "0") int page,
+            @Parameter(
+                name = "size",
+                description = "Number of orders per page (maximum 100)",
+                example = "20",
+                in = ParameterIn.QUERY
+            ) @RequestParam(defaultValue = "20") int size,
+            @Parameter(
+                name = "status",
+                description = "Filter orders by status",
+                example = "FILLED",
+                schema = @Schema(implementation = OrderStatus.class),
+                in = ParameterIn.QUERY
+            ) @RequestParam(required = false) OrderStatus status,
+            @Parameter(
+                name = "symbol",
+                description = "Filter orders by trading symbol",
+                example = "AAPL",
+                in = ParameterIn.QUERY
+            ) @RequestParam(required = false) String symbol,
+            @Parameter(hidden = true) @AuthenticationPrincipal TradingUserPrincipal principal) {
         
         Long userId = principal.getUserId();
         
@@ -211,11 +299,21 @@ public class TradingController {
      * Get active orders for user (Optimized query)
      */
     @GetMapping("/active")
-    @Operation(summary = "Get active orders", 
-               description = "Retrieve all active orders (ACKNOWLEDGED, PARTIALLY_FILLED)")
-    @ApiResponse(responseCode = "200", description = "Active orders retrieved successfully")
+    @Operation(
+        summary = "Get active orders",
+        description = "Retrieve all orders with active status (ACKNOWLEDGED, PARTIALLY_FILLED) for the authenticated user",
+        tags = {"Orders"}
+    )
+    @ApiResponse(
+        responseCode = "200",
+        description = "Active orders retrieved successfully",
+        content = @Content(
+            mediaType = "application/json",
+            schema = @Schema(type = "array", implementation = OrderResponse.class)
+        )
+    )
     public ResponseEntity<List<OrderResponse>> getActiveOrders(
-            @AuthenticationPrincipal TradingUserPrincipal principal) {
+            @Parameter(hidden = true) @AuthenticationPrincipal TradingUserPrincipal principal) {
         
         Long userId = principal.getUserId();
         
@@ -232,18 +330,34 @@ public class TradingController {
      * Modify an existing order (Async with Virtual Threads)
      */
     @PutMapping("/{orderId}")
-    @Operation(summary = "Modify order", 
-               description = "Modify quantity or price of an existing order")
+    @Operation(
+        summary = "Modify order",
+        description = "Modify quantity, price, or order type of an existing order that is not yet filled",
+        tags = {"Orders"}
+    )
     @ApiResponses({
-        @ApiResponse(responseCode = "200", description = "Order modified successfully"),
-        @ApiResponse(responseCode = "400", description = "Invalid modification request"),
-        @ApiResponse(responseCode = "404", description = "Order not found"),
-        @ApiResponse(responseCode = "409", description = "Order cannot be modified in current status")
+        @ApiResponse(
+            responseCode = "200",
+            description = "Order modified successfully",
+            content = @Content(
+                mediaType = "application/json",
+                schema = @Schema(implementation = OrderResponse.class)
+            )
+        ),
+        @ApiResponse(responseCode = "400", description = "Invalid modification request - validation failed"),
+        @ApiResponse(responseCode = "404", description = "Order not found or not accessible"),
+        @ApiResponse(responseCode = "409", description = "Order cannot be modified in current status (e.g., already filled)")
     })
     public CompletableFuture<ResponseEntity<OrderResponse>> modifyOrder(
-            @PathVariable String orderId,
-            @Valid @RequestBody OrderRequest modificationRequest,
-            @AuthenticationPrincipal TradingUserPrincipal principal) {
+            @Parameter(
+                name = "orderId",
+                description = "Unique order identifier to modify",
+                required = true,
+                example = "ORD-12345678",
+                in = ParameterIn.PATH
+            ) @PathVariable String orderId,
+            @Parameter(hidden = true) @Valid @RequestBody OrderRequest modificationRequest,
+            @Parameter(hidden = true) @AuthenticationPrincipal TradingUserPrincipal principal) {
         
         Long userId = principal.getUserId();
         
@@ -278,16 +392,32 @@ public class TradingController {
      * Cancel an order (Fast blocking operation)
      */
     @DeleteMapping("/{orderId}")
-    @Operation(summary = "Cancel order", 
-               description = "Cancel an existing order")
+    @Operation(
+        summary = "Cancel order",
+        description = "Cancel an existing order that has not been filled yet",
+        tags = {"Orders"}
+    )
     @ApiResponses({
-        @ApiResponse(responseCode = "200", description = "Order cancelled successfully"),
-        @ApiResponse(responseCode = "404", description = "Order not found"),
-        @ApiResponse(responseCode = "409", description = "Order cannot be cancelled in current status")
+        @ApiResponse(
+            responseCode = "200",
+            description = "Order cancelled successfully",
+            content = @Content(
+                mediaType = "application/json",
+                schema = @Schema(implementation = OrderResponse.class)
+            )
+        ),
+        @ApiResponse(responseCode = "404", description = "Order not found or not accessible to user"),
+        @ApiResponse(responseCode = "409", description = "Order cannot be cancelled in current status (e.g., already filled or cancelled)")
     })
     public ResponseEntity<OrderResponse> cancelOrder(
-            @PathVariable String orderId,
-            @AuthenticationPrincipal TradingUserPrincipal principal) {
+            @Parameter(
+                name = "orderId",
+                description = "Unique order identifier to cancel",
+                required = true,
+                example = "ORD-12345678",
+                in = ParameterIn.PATH
+            ) @PathVariable String orderId,
+            @Parameter(hidden = true) @AuthenticationPrincipal TradingUserPrincipal principal) {
         
         Long userId = principal.getUserId();
         
@@ -316,12 +446,28 @@ public class TradingController {
      * Get order status (Ultra-fast lightweight endpoint)
      */
     @GetMapping("/{orderId}/status")
-    @Operation(summary = "Get order status", 
-               description = "Get current status of an order (lightweight)")
-    @ApiResponse(responseCode = "200", description = "Order status retrieved")
+    @Operation(
+        summary = "Get order status",
+        description = "Get current status of an order (lightweight endpoint for status polling)",
+        tags = {"Orders"}
+    )
+    @ApiResponse(
+        responseCode = "200",
+        description = "Order status retrieved successfully",
+        content = @Content(
+            mediaType = "text/plain",
+            schema = @Schema(type = "string", example = "FILLED")
+        )
+    )
     public ResponseEntity<String> getOrderStatus(
-            @PathVariable String orderId,
-            @AuthenticationPrincipal TradingUserPrincipal principal) {
+            @Parameter(
+                name = "orderId",
+                description = "Unique order identifier",
+                required = true,
+                example = "ORD-12345678",
+                in = ParameterIn.PATH
+            ) @PathVariable String orderId,
+            @Parameter(hidden = true) @AuthenticationPrincipal TradingUserPrincipal principal) {
         
         Long userId = principal.getUserId();
         
@@ -337,11 +483,25 @@ public class TradingController {
      * Get order count for user (Dashboard widget optimization)
      */
     @GetMapping("/count")
-    @Operation(summary = "Get order counts", 
-               description = "Get count of orders by status for user dashboard")
-    @ApiResponse(responseCode = "200", description = "Order counts retrieved")
+    @Operation(
+        summary = "Get order counts",
+        description = "Get aggregated count of orders by status for user dashboard widgets",
+        tags = {"Orders", "Dashboard"}
+    )
+    @ApiResponse(
+        responseCode = "200",
+        description = "Order counts retrieved successfully",
+        content = @Content(
+            mediaType = "application/json",
+            schema = @Schema(type = "object"),
+            examples = @ExampleObject(
+                name = "Order Counts",
+                value = "{\"FILLED\":25,\"ACKNOWLEDGED\":3,\"CANCELLED\":2,\"REJECTED\":1}"
+            )
+        )
+    )
     public ResponseEntity<Map<String, Long>> getOrderCounts(
-            @AuthenticationPrincipal TradingUserPrincipal principal) {
+            @Parameter(hidden = true) @AuthenticationPrincipal TradingUserPrincipal principal) {
         
         Long userId = principal.getUserId();
         
@@ -357,12 +517,22 @@ public class TradingController {
      * Bulk order operations (Virtual Thread optimization)
      */
     @PostMapping("/bulk")
-    @Operation(summary = "Place multiple orders", 
-               description = "Submit multiple orders for batch processing")
-    @ApiResponse(responseCode = "200", description = "Bulk orders processed")
+    @Operation(
+        summary = "Place multiple orders",
+        description = "Submit multiple orders for efficient batch processing using Virtual Threads",
+        tags = {"Orders", "Batch"}
+    )
+    @ApiResponse(
+        responseCode = "200",
+        description = "Bulk orders processed (partial success possible)",
+        content = @Content(
+            mediaType = "application/json",
+            schema = @Schema(type = "array", implementation = OrderResponse.class)
+        )
+    )
     public CompletableFuture<ResponseEntity<List<OrderResponse>>> placeBulkOrders(
-            @Valid @RequestBody List<OrderRequest> orderRequests,
-            @AuthenticationPrincipal TradingUserPrincipal principal) {
+            @Parameter(hidden = true) @Valid @RequestBody List<OrderRequest> orderRequests,
+            @Parameter(hidden = true) @AuthenticationPrincipal TradingUserPrincipal principal) {
         
         Long userId = principal.getUserId();
         
@@ -386,7 +556,7 @@ public class TradingController {
                         return null;
                     }
                 })
-                .filter(response -> response != null)
+                .filter(Objects::nonNull)
                 .toList();
                 
             log.info("Processed {}/{} bulk orders successfully for user {}", 
@@ -415,6 +585,8 @@ public class TradingController {
     private String generateCorrelationId() {
         return "TC-" + System.currentTimeMillis() + "-" + Thread.currentThread().getName().hashCode();
     }
+    
+    // Note: Health endpoints are now handled by ApiV2HealthController and GatewayController
 }
 
 // Functional record for order filter parameters

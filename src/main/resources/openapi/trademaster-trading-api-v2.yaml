@@ -1,0 +1,1719 @@
+openapi: 3.0.3
+info:
+  title: TradeMaster Trading Service API
+  description: |
+    ## 🚀 Enterprise-Grade Trading Platform
+    
+    Advanced financial trading service built with **Java 24 Virtual Threads** and **Spring Boot 3.5.3**, 
+    providing real-time order execution, portfolio management, and risk control across multiple brokers.
+    
+    ### ⚡ Key Features
+    - **Multi-Broker Integration**: Zerodha, Angel One, Upstox, ICICI Direct
+    - **Real-Time Execution**: Sub-50ms order placement and <25ms risk checks
+    - **Virtual Threads**: Unlimited scalability with 10,000+ concurrent users
+    - **Zero Trust Security**: JWT authentication with role-based authorization
+    - **AgentOS Integration**: AI-driven trading capabilities with MCP protocol
+    - **Risk Management**: Real-time compliance and regulatory checks
+    - **Comprehensive Monitoring**: Prometheus metrics and structured logging
+    
+    ### 🔒 Authentication & Security
+    All endpoints require JWT Bearer token authentication:
+    ```http
+    Authorization: Bearer <jwt-token>
+    ```
+    
+    ### 🏎️ Performance & Rate Limits
+    | Tier | Requests/min | Orders/min | Response Time SLA |
+    |------|-------------|------------|-------------------|
+    | **Standard** | 1,000 | 100 | <200ms |
+    | **Premium** | 5,000 | 500 | <100ms |
+    | **Enterprise** | 25,000 | 2,500 | <50ms |
+    
+    ### 📊 Error Handling
+    Consistent error responses with functional Result types:
+    ```json
+    {
+      "success": false,
+      "error": {
+        "code": "VALIDATION_ERROR",
+        "message": "Invalid order parameters",
+        "details": "Quantity must be greater than zero",
+        "timestamp": "2024-09-06T10:30:00Z",
+        "correlationId": "req-123456"
+      }
+    }
+    ```
+    
+  version: '2.0.0'
+  contact:
+    name: TradeMaster API Support
+    url: https://github.com/buntythecoder/trademaster-trading-service
+    email: api-support@trademaster.com
+  license:
+    name: MIT License
+    url: https://github.com/buntythecoder/trademaster-trading-service/blob/master/LICENSE
+  termsOfService: https://trademaster.com/terms
+
+servers:
+  - url: https://api.trademaster.com/trading/v2
+    description: 🌐 Production Server (Kong Gateway)
+  - url: https://staging-api.trademaster.com/trading/v2
+    description: 🧪 Staging Server (Kong Gateway)
+  - url: https://dev-api.trademaster.com/trading/v2
+    description: 🔨 Development Server
+  - url: http://localhost:8083/api/v2
+    description: 🏠 Local Development
+
+# Kong Gateway Extensions
+x-kong-service-defaults:
+  protocol: http
+  host: trading-service
+  port: 8083
+  path: /api/v2
+  retries: 3
+  connect_timeout: 10000
+  write_timeout: 10000
+  read_timeout: 10000
+
+x-kong-upstream:
+  name: trading-service-upstream
+  algorithm: round-robin
+  healthchecks:
+    active:
+      type: http
+      http_path: /gateway/health
+      healthy:
+        interval: 5
+        successes: 3
+      unhealthy:
+        interval: 5
+        http_failures: 3
+    passive:
+      healthy:
+        successes: 3
+      unhealthy:
+        http_failures: 3
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Orders
+    description: 📈 Order management and execution
+  - name: Portfolio
+    description: 💼 Portfolio and position tracking
+  - name: Risk
+    description: 🛡️ Risk management and compliance
+  - name: Market Data
+    description: 📊 Real-time market data
+  - name: Health
+    description: ❤️ Health and status monitoring (Kong Gateway compatible)
+  - name: Admin
+    description: ⚙️ Administrative operations
+
+paths:
+  # ==================== HEALTH & MONITORING ENDPOINTS ====================
+  /health:
+    get:
+      tags: [Health]
+      summary: Kong Gateway Health Check
+      description: |
+        **Kong Gateway Compatible Health Endpoint**
+        
+        Primary health check endpoint optimized for Kong Gateway load balancing.
+        Returns HTTP 200 for healthy service, HTTP 503 for unhealthy.
+        
+        **Kong Configuration:**
+        ```yaml
+        healthchecks:
+          active:
+            http_path: /api/v2/health
+            healthy: { successes: 3, interval: 5 }
+            unhealthy: { http_failures: 3, interval: 5 }
+        ```
+      operationId: healthCheck
+      security: [] # Public endpoint for load balancers
+      x-kong-plugin-request-termination:
+        status_code: 200
+        message: "Service Healthy"
+      responses:
+        '200':
+          description: Service is healthy and ready to accept requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+              example:
+                status: "UP"
+                service: "trading-service"
+                version: "2.0.0"
+                timestamp: "2024-09-06T10:30:00Z"
+                checks:
+                  database: "UP"
+                  brokers: "UP"
+                  external_apis: "UP"
+        '503':
+          description: Service is unhealthy or degraded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+              example:
+                status: "DOWN"
+                service: "trading-service"
+                version: "2.0.0"
+                timestamp: "2024-09-06T10:30:00Z"
+                checks:
+                  database: "UP"
+                  brokers: "DOWN"
+                  external_apis: "DEGRADED"
+
+  /gateway/health:
+    get:
+      tags: [Health]
+      summary: Comprehensive Gateway Health
+      description: |
+        **Detailed health status for API Gateway integration**
+        
+        Provides comprehensive health information including:
+        - Service availability and performance metrics
+        - Database connection status
+        - Broker connectivity status
+        - External service dependencies
+        - System resource utilization
+      operationId: gatewayHealthCheck
+      security: [] # Public for load balancers
+      responses:
+        '200':
+          description: Detailed health status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetailedHealthStatus'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /gateway/ready:
+    get:
+      tags: [Health]
+      summary: Readiness Probe (Kubernetes/Kong)
+      description: |
+        **Kubernetes Readiness Probe**
+        
+        Indicates if the service is ready to accept traffic.
+        Used by Kubernetes and Kong Gateway for rolling deployments.
+      operationId: readinessCheck
+      security: []
+      responses:
+        '200':
+          description: Service is ready to accept requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessStatus'
+        '503':
+          description: Service is not ready
+
+  /gateway/alive:
+    get:
+      tags: [Health]
+      summary: Liveness Probe (Kubernetes/Kong)
+      description: |
+        **Kubernetes Liveness Probe**
+        
+        Indicates if the service is alive and should not be restarted.
+        Used by Kubernetes for pod lifecycle management.
+      operationId: livenessCheck
+      security: []
+      responses:
+        '200':
+          description: Service is alive
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LivenessStatus'
+        '503':
+          description: Service should be restarted
+
+  /gateway/status:
+    get:
+      tags: [Health]
+      summary: Service Status & Metrics
+      description: |
+        **Detailed service status with metrics**
+        
+        Provides operational metrics and status information:
+        - Virtual thread utilization
+        - Order processing statistics
+        - Response time percentiles
+        - Error rates and circuit breaker status
+      operationId: serviceStatus
+      security: []
+      responses:
+        '200':
+          description: Service status with metrics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceStatus'
+
+  # ==================== ORDER MANAGEMENT ENDPOINTS ====================
+  /orders:
+    post:
+      tags: [Orders]
+      summary: Place New Trading Order
+      description: |
+        **🚀 Real-Time Order Placement**
+        
+        Submit trading orders with **sub-50ms execution time** using Java 24 Virtual Threads.
+        
+        **Order Flow:**
+        1. **Validation** - Input sanitization and business rules (5ms)
+        2. **Risk Check** - Real-time compliance validation (15ms)
+        3. **Routing** - Smart broker selection and execution (25ms)
+        4. **Confirmation** - Order acknowledgment and tracking (5ms)
+        
+        **Supported Order Types:**
+        - `MARKET` - Execute immediately at current market price
+        - `LIMIT` - Execute only at specified price or better
+        - `STOP_LOSS` - Trigger market order when price reaches stop level
+        - `STOP_LIMIT` - Trigger limit order when price reaches stop level
+        - `BRACKET` - OCO (One-Cancels-Other) orders with profit/loss targets
+        
+      operationId: placeOrder
+      security:
+        - bearerAuth: []
+      x-kong-plugin-rate-limiting:
+        minute: 100
+        policy: local
+        fault_tolerant: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderRequest'
+            examples:
+              market_buy:
+                summary: Market Buy Order
+                description: Buy 100 shares of Reliance at current market price
+                value:
+                  symbol: "RELIANCE"
+                  exchange: "NSE"
+                  orderType: "MARKET"
+                  side: "BUY"
+                  quantity: 100
+                  timeInForce: "DAY"
+              limit_sell:
+                summary: Limit Sell Order
+                description: Sell 50 shares of Infosys at ₹1500.50 or better
+                value:
+                  symbol: "INFY"
+                  exchange: "NSE"
+                  orderType: "LIMIT"
+                  side: "SELL"
+                  quantity: 50
+                  limitPrice: 1500.50
+                  timeInForce: "GTC"
+              stop_loss:
+                summary: Stop Loss Order
+                description: Sell 25 shares of TCS if price drops to ₹3200
+                value:
+                  symbol: "TCS"
+                  exchange: "NSE"
+                  orderType: "STOP_LOSS"
+                  side: "SELL"
+                  quantity: 25
+                  stopPrice: 3200.00
+                  timeInForce: "GTC"
+      responses:
+        '201':
+          description: ✅ Order successfully placed and acknowledged
+          headers:
+            X-Order-Id:
+              description: Unique order identifier
+              schema:
+                type: string
+                example: "TM-1634567890123-ABC123"
+            X-Correlation-Id:
+              description: Request correlation ID for tracking
+              schema:
+                type: string
+                example: "req-987654321"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+              example:
+                success: true
+                data:
+                  orderId: "TM-1634567890123-ABC123"
+                  status: "ACKNOWLEDGED"
+                  symbol: "RELIANCE"
+                  side: "BUY"
+                  quantity: 100
+                  broker: "ZERODHA"
+                  brokerOrderId: "240906000123456"
+                  estimatedExecutionTime: "2024-09-06T09:30:15Z"
+                  fees:
+                    brokerage: 10.50
+                    taxes: 5.25
+                    total: 15.75
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          description: Risk validation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RiskViolationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+    get:
+      tags: [Orders]
+      summary: Get User Orders
+      description: |
+        **📋 Order History & Status Tracking**
+        
+        Retrieve user orders with advanced filtering and real-time status updates.
+        
+        **Performance**: <25ms response time with pagination support for millions of orders.
+        
+        **Real-time Updates**: Orders are updated via WebSocket for live tracking.
+      operationId: getUserOrders
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          description: Filter by order status (supports multiple values)
+          schema:
+            type: array
+            items:
+              $ref: '#/components/schemas/OrderStatus'
+          style: form
+          explode: false
+          example: ["PENDING", "PARTIALLY_FILLED"]
+        - name: symbol
+          in: query
+          description: Filter by trading symbol
+          schema:
+            type: string
+            pattern: "^[A-Z0-9&.-]{1,20}$"
+          example: "RELIANCE"
+        - name: dateFrom
+          in: query
+          description: Start date for order history (ISO 8601)
+          schema:
+            type: string
+            format: date-time
+          example: "2024-09-01T00:00:00Z"
+        - name: dateTo
+          in: query
+          description: End date for order history (ISO 8601)
+          schema:
+            type: string
+            format: date-time
+          example: "2024-09-06T23:59:59Z"
+        - name: page
+          in: query
+          description: Page number (0-based)
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: size
+          in: query
+          description: Page size (max 100)
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: sort
+          in: query
+          description: Sort order
+          schema:
+            type: string
+            enum: ["createdAt,desc", "createdAt,asc", "symbol,asc", "status,asc"]
+            default: "createdAt,desc"
+      responses:
+        '200':
+          description: ✅ Orders retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /orders/{orderId}:
+    get:
+      tags: [Orders]
+      summary: Get Order Details
+      description: |
+        **📊 Detailed Order Information**
+        
+        Retrieve comprehensive order details including:
+        - Real-time execution status
+        - Fill history and partial executions
+        - Fee breakdown and P&L calculation
+        - Risk assessment results
+        - Audit trail and compliance notes
+      operationId: getOrderById
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          description: Unique order identifier
+          schema:
+            type: string
+            pattern: "^TM-[0-9]+-[A-Z0-9]+$"
+          example: "TM-1634567890123-ABC123"
+      responses:
+        '200':
+          description: ✅ Order details retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetailedOrderResponse'
+        '404':
+          description: Order not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error:
+                  code: "ORDER_NOT_FOUND"
+                  message: "Order not found or access denied"
+                  timestamp: "2024-09-06T10:30:00Z"
+
+    put:
+      tags: [Orders]
+      summary: Modify Order
+      description: |
+        **✏️ Order Modification**
+        
+        Modify pending orders with real-time validation.
+        Only quantity and price can be modified for pending orders.
+      operationId: modifyOrder
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderModificationRequest'
+      responses:
+        '200':
+          description: ✅ Order modified successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          description: Order not found or cannot be modified
+        '422':
+          description: Order modification not allowed in current status
+
+    delete:
+      tags: [Orders]
+      summary: Cancel Order
+      description: |
+        **❌ Order Cancellation**
+        
+        Cancel pending or partially filled orders.
+        **Performance**: <50ms cancellation acknowledgment.
+      operationId: cancelOrder
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: ✅ Order cancellation initiated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderCancellationResponse'
+        '404':
+          description: Order not found
+        '422':
+          description: Order cannot be cancelled in current status
+
+  # ==================== PORTFOLIO ENDPOINTS ====================
+  /portfolio:
+    get:
+      tags: [Portfolio]
+      summary: Get Portfolio Summary
+      description: |
+        **💼 Real-Time Portfolio Overview**
+        
+        Comprehensive portfolio summary with:
+        - Current positions and P&L
+        - Cash balance and buying power
+        - Risk metrics and exposure analysis
+        - Performance attribution
+        
+        **Performance**: <10ms response time with real-time data.
+      operationId: getPortfolioSummary
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: ✅ Portfolio summary retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PortfolioSummary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /portfolio/positions:
+    get:
+      tags: [Portfolio]
+      summary: Get Current Positions
+      description: |
+        **📈 Position Tracking**
+        
+        Real-time position information with:
+        - Current market value and P&L
+        - Average cost and quantity
+        - Risk metrics per position
+        - Sector and asset allocation
+      operationId: getCurrentPositions
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: symbol
+          in: query
+          description: Filter by specific symbol
+          schema:
+            type: string
+        - name: includeZero
+          in: query
+          description: Include closed positions (quantity = 0)
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: ✅ Positions retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PositionListResponse'
+
+  # ==================== RISK MANAGEMENT ENDPOINTS ====================
+  /risk/limits:
+    get:
+      tags: [Risk]
+      summary: Get Risk Limits
+      description: |
+        **🛡️ Risk Limit Overview**
+        
+        Current risk limits and utilization:
+        - Position size limits
+        - Sector concentration limits
+        - Leverage and margin requirements
+        - Trading velocity limits
+      operationId: getRiskLimits
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: ✅ Risk limits retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RiskLimits'
+
+  /risk/check:
+    post:
+      tags: [Risk]
+      summary: Pre-Trade Risk Check
+      description: |
+        **✅ Risk Validation**
+        
+        Validate proposed trade against risk limits before execution.
+        **Performance**: <25ms risk assessment.
+      operationId: performRiskCheck
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RiskCheckRequest'
+      responses:
+        '200':
+          description: ✅ Risk check completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RiskCheckResponse'
+        '422':
+          description: Risk violation detected
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RiskViolationError'
+
+  # ==================== MARKET DATA ENDPOINTS ====================
+  /market/quotes:
+    get:
+      tags: [Market Data]
+      summary: Get Real-Time Quotes
+      description: |
+        **📊 Live Market Data**
+        
+        Real-time quotes with bid/ask spreads and market depth.
+        **Latency**: <100ms for live market data.
+      operationId: getMarketQuotes
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: symbols
+          in: query
+          required: true
+          description: Comma-separated list of symbols
+          schema:
+            type: string
+          example: "RELIANCE,INFY,TCS"
+      responses:
+        '200':
+          description: ✅ Market quotes retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MarketQuotesResponse'
+
+  # ==================== ADMIN ENDPOINTS ====================
+  /admin/metrics:
+    get:
+      tags: [Admin]
+      summary: Service Metrics (Admin Only)
+      description: |
+        **📊 Service Performance Metrics**
+        
+        Detailed performance metrics for administrators:
+        - Order processing statistics
+        - Response time percentiles
+        - Error rates and patterns
+        - Virtual thread utilization
+        - Circuit breaker status
+      operationId: getServiceMetrics
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: ✅ Metrics retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceMetrics'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+# ==================== COMPONENTS ====================
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        JWT Bearer token authentication.
+        
+        **Example:**
+        ```
+        Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...
+        ```
+
+  schemas:
+    # ==================== HEALTH SCHEMAS ====================
+    HealthStatus:
+      type: object
+      required: [status, service, version, timestamp]
+      properties:
+        status:
+          type: string
+          enum: [UP, DOWN, DEGRADED]
+          description: Overall service health status
+        service:
+          type: string
+          example: "trading-service"
+          description: Service name
+        version:
+          type: string
+          example: "2.0.0"
+          description: Service version
+        timestamp:
+          type: string
+          format: date-time
+          description: Health check timestamp
+        checks:
+          type: object
+          description: Individual health check results
+          additionalProperties:
+            type: string
+            enum: [UP, DOWN, DEGRADED]
+
+    DetailedHealthStatus:
+      allOf:
+        - $ref: '#/components/schemas/HealthStatus'
+        - type: object
+          properties:
+            uptime:
+              type: integer
+              description: Service uptime in seconds
+              example: 86400
+            metrics:
+              type: object
+              properties:
+                activeConnections:
+                  type: integer
+                  example: 1500
+                virtualThreads:
+                  type: integer
+                  example: 2500
+                responseTimeMs:
+                  type: number
+                  format: double
+                  example: 35.7
+                errorRate:
+                  type: number
+                  format: double
+                  example: 0.05
+
+    ReadinessStatus:
+      type: object
+      required: [ready, timestamp]
+      properties:
+        ready:
+          type: boolean
+          description: Service readiness status
+        timestamp:
+          type: string
+          format: date-time
+        dependencies:
+          type: object
+          description: Dependency readiness status
+          additionalProperties:
+            type: boolean
+
+    LivenessStatus:
+      type: object
+      required: [alive, timestamp]
+      properties:
+        alive:
+          type: boolean
+          description: Service liveness status
+        timestamp:
+          type: string
+          format: date-time
+        lastActivity:
+          type: string
+          format: date-time
+
+    ServiceStatus:
+      type: object
+      properties:
+        service:
+          type: string
+          example: "trading-service"
+        version:
+          type: string
+          example: "2.0.0"
+        buildTime:
+          type: string
+          format: date-time
+        startTime:
+          type: string
+          format: date-time
+        metrics:
+          $ref: '#/components/schemas/ServiceMetrics'
+
+    # ==================== ORDER SCHEMAS ====================
+    OrderRequest:
+      type: object
+      required: [symbol, exchange, orderType, side, quantity, timeInForce]
+      properties:
+        symbol:
+          type: string
+          pattern: "^[A-Z0-9&.-]{1,20}$"
+          example: "RELIANCE"
+          description: Trading symbol
+        exchange:
+          type: string
+          enum: [NSE, BSE, NFO, BFO, CDS, MCX]
+          example: "NSE"
+          description: Exchange identifier
+        orderType:
+          $ref: '#/components/schemas/OrderType'
+        side:
+          $ref: '#/components/schemas/OrderSide'
+        quantity:
+          type: integer
+          minimum: 1
+          maximum: 10000
+          example: 100
+          description: Order quantity
+        limitPrice:
+          type: number
+          format: double
+          minimum: 0.01
+          example: 1500.50
+          description: Limit price (required for LIMIT and STOP_LIMIT orders)
+        stopPrice:
+          type: number
+          format: double
+          minimum: 0.01
+          example: 1450.00
+          description: Stop price (required for STOP_LOSS and STOP_LIMIT orders)
+        timeInForce:
+          $ref: '#/components/schemas/TimeInForce'
+        tags:
+          type: array
+          items:
+            type: string
+          maxItems: 5
+          description: Optional tags for order categorization
+        clientOrderId:
+          type: string
+          maxLength: 50
+          description: Client-provided order identifier
+
+    OrderResponse:
+      type: object
+      required: [success, data]
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+          required: [orderId, status, symbol, side, quantity]
+          properties:
+            orderId:
+              type: string
+              example: "TM-1634567890123-ABC123"
+              description: Unique system order ID
+            status:
+              $ref: '#/components/schemas/OrderStatus'
+            symbol:
+              type: string
+              example: "RELIANCE"
+            exchange:
+              type: string
+              example: "NSE"
+            orderType:
+              $ref: '#/components/schemas/OrderType'
+            side:
+              $ref: '#/components/schemas/OrderSide'
+            quantity:
+              type: integer
+              example: 100
+            filledQuantity:
+              type: integer
+              example: 0
+              description: Quantity executed so far
+            remainingQuantity:
+              type: integer
+              example: 100
+            limitPrice:
+              type: number
+              format: double
+              example: 1500.50
+            broker:
+              type: string
+              example: "ZERODHA"
+              description: Selected broker for execution
+            brokerOrderId:
+              type: string
+              example: "240906000123456"
+              description: Broker-specific order ID
+            estimatedExecutionTime:
+              type: string
+              format: date-time
+              description: Expected execution time
+            fees:
+              type: object
+              properties:
+                brokerage:
+                  type: number
+                  format: double
+                  example: 10.50
+                taxes:
+                  type: number
+                  format: double
+                  example: 5.25
+                total:
+                  type: number
+                  format: double
+                  example: 15.75
+            createdAt:
+              type: string
+              format: date-time
+            updatedAt:
+              type: string
+              format: date-time
+
+    DetailedOrderResponse:
+      allOf:
+        - $ref: '#/components/schemas/OrderResponse'
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                fillHistory:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/OrderFill'
+                riskAssessment:
+                  $ref: '#/components/schemas/RiskAssessment'
+                auditTrail:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/AuditEntry'
+
+    OrderListResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+          properties:
+            orders:
+              type: array
+              items:
+                $ref: '#/components/schemas/OrderResponse'
+            pagination:
+              $ref: '#/components/schemas/Pagination'
+            summary:
+              type: object
+              properties:
+                totalOrders:
+                  type: integer
+                  example: 1500
+                totalValue:
+                  type: number
+                  format: double
+                  example: 125000.75
+                statusCounts:
+                  type: object
+                  additionalProperties:
+                    type: integer
+
+    OrderModificationRequest:
+      type: object
+      properties:
+        quantity:
+          type: integer
+          minimum: 1
+          description: New order quantity
+        limitPrice:
+          type: number
+          format: double
+          minimum: 0.01
+          description: New limit price
+
+    OrderCancellationResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+          properties:
+            orderId:
+              type: string
+            cancellationId:
+              type: string
+            status:
+              type: string
+              example: "CANCEL_PENDING"
+            timestamp:
+              type: string
+              format: date-time
+
+    OrderFill:
+      type: object
+      properties:
+        fillId:
+          type: string
+        quantity:
+          type: integer
+        price:
+          type: number
+          format: double
+        timestamp:
+          type: string
+          format: date-time
+        exchange:
+          type: string
+        fees:
+          type: number
+          format: double
+
+    # ==================== PORTFOLIO SCHEMAS ====================
+    PortfolioSummary:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+          properties:
+            totalValue:
+              type: number
+              format: double
+              example: 500000.00
+              description: Total portfolio value
+            cashBalance:
+              type: number
+              format: double
+              example: 50000.00
+            buyingPower:
+              type: number
+              format: double
+              example: 200000.00
+            dayPnL:
+              type: number
+              format: double
+              example: 2500.50
+              description: Day's profit/loss
+            totalPnL:
+              type: number
+              format: double
+              example: 15000.75
+              description: Total unrealized P&L
+            positions:
+              type: array
+              items:
+                $ref: '#/components/schemas/Position'
+            allocation:
+              type: object
+              description: Asset allocation breakdown
+              properties:
+                sectors:
+                  type: object
+                  additionalProperties:
+                    type: number
+                    format: double
+                assetTypes:
+                  type: object
+                  additionalProperties:
+                    type: number
+                    format: double
+
+    Position:
+      type: object
+      properties:
+        symbol:
+          type: string
+          example: "RELIANCE"
+        exchange:
+          type: string
+          example: "NSE"
+        quantity:
+          type: integer
+          example: 100
+        averagePrice:
+          type: number
+          format: double
+          example: 2450.75
+        currentPrice:
+          type: number
+          format: double
+          example: 2475.50
+        marketValue:
+          type: number
+          format: double
+          example: 247550.00
+        unrealizedPnL:
+          type: number
+          format: double
+          example: 2475.00
+        dayChange:
+          type: number
+          format: double
+          example: 125.25
+        dayChangePercent:
+          type: number
+          format: double
+          example: 0.53
+
+    PositionListResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+          properties:
+            positions:
+              type: array
+              items:
+                $ref: '#/components/schemas/Position'
+            summary:
+              type: object
+              properties:
+                totalPositions:
+                  type: integer
+                totalValue:
+                  type: number
+                  format: double
+                totalPnL:
+                  type: number
+                  format: double
+
+    # ==================== RISK SCHEMAS ====================
+    RiskLimits:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+          properties:
+            positionLimits:
+              type: object
+              properties:
+                maxPositionSize:
+                  type: number
+                  format: double
+                  example: 100000.00
+                maxPortfolioValue:
+                  type: number
+                  format: double
+                  example: 1000000.00
+                maxLeverage:
+                  type: number
+                  format: double
+                  example: 3.0
+            tradingLimits:
+              type: object
+              properties:
+                maxOrdersPerDay:
+                  type: integer
+                  example: 1000
+                maxTradingValue:
+                  type: number
+                  format: double
+                  example: 500000.00
+            utilizationStatus:
+              type: object
+              properties:
+                positionUtilization:
+                  type: number
+                  format: double
+                  example: 65.5
+                  description: Percentage utilization
+                tradingUtilization:
+                  type: number
+                  format: double
+                  example: 23.7
+
+    RiskCheckRequest:
+      type: object
+      required: [symbol, side, quantity, price]
+      properties:
+        symbol:
+          type: string
+          example: "RELIANCE"
+        side:
+          $ref: '#/components/schemas/OrderSide'
+        quantity:
+          type: integer
+          example: 100
+        price:
+          type: number
+          format: double
+          example: 2500.00
+        orderType:
+          $ref: '#/components/schemas/OrderType'
+
+    RiskCheckResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+          properties:
+            approved:
+              type: boolean
+              example: true
+            riskScore:
+              type: number
+              format: double
+              example: 0.25
+              description: Risk score (0-1, lower is better)
+            violations:
+              type: array
+              items:
+                $ref: '#/components/schemas/RiskViolation'
+            warnings:
+              type: array
+              items:
+                $ref: '#/components/schemas/RiskWarning'
+            marginRequired:
+              type: number
+              format: double
+              example: 12500.00
+            availableMargin:
+              type: number
+              format: double
+              example: 75000.00
+
+    RiskAssessment:
+      type: object
+      properties:
+        riskScore:
+          type: number
+          format: double
+          example: 0.15
+        assessment:
+          type: string
+          enum: [LOW, MEDIUM, HIGH, CRITICAL]
+        factors:
+          type: array
+          items:
+            type: object
+            properties:
+              factor:
+                type: string
+              score:
+                type: number
+                format: double
+              description:
+                type: string
+
+    RiskViolation:
+      type: object
+      properties:
+        code:
+          type: string
+          example: "POSITION_LIMIT_EXCEEDED"
+        message:
+          type: string
+          example: "Position size exceeds maximum limit"
+        severity:
+          type: string
+          enum: [LOW, MEDIUM, HIGH, CRITICAL]
+        currentValue:
+          type: number
+          format: double
+        limitValue:
+          type: number
+          format: double
+
+    RiskWarning:
+      type: object
+      properties:
+        code:
+          type: string
+          example: "HIGH_VOLATILITY"
+        message:
+          type: string
+          example: "Symbol showing high volatility"
+        recommendation:
+          type: string
+
+    # ==================== MARKET DATA SCHEMAS ====================
+    MarketQuotesResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+          properties:
+            quotes:
+              type: array
+              items:
+                $ref: '#/components/schemas/MarketQuote'
+            timestamp:
+              type: string
+              format: date-time
+
+    MarketQuote:
+      type: object
+      properties:
+        symbol:
+          type: string
+          example: "RELIANCE"
+        exchange:
+          type: string
+          example: "NSE"
+        lastPrice:
+          type: number
+          format: double
+          example: 2475.50
+        bidPrice:
+          type: number
+          format: double
+          example: 2475.25
+        askPrice:
+          type: number
+          format: double
+          example: 2475.75
+        volume:
+          type: integer
+          example: 1250000
+        change:
+          type: number
+          format: double
+          example: 12.75
+        changePercent:
+          type: number
+          format: double
+          example: 0.52
+        high:
+          type: number
+          format: double
+          example: 2485.00
+        low:
+          type: number
+          format: double
+          example: 2460.50
+        timestamp:
+          type: string
+          format: date-time
+
+    # ==================== ENUMS ====================
+    OrderType:
+      type: string
+      enum: [MARKET, LIMIT, STOP_LOSS, STOP_LIMIT, BRACKET]
+      description: |
+        Order execution type:
+        - **MARKET**: Execute immediately at current market price
+        - **LIMIT**: Execute only at specified price or better
+        - **STOP_LOSS**: Trigger market order when price reaches stop level
+        - **STOP_LIMIT**: Trigger limit order when price reaches stop level
+        - **BRACKET**: OCO order with profit/loss targets
+
+    OrderSide:
+      type: string
+      enum: [BUY, SELL]
+      description: Order direction
+
+    OrderStatus:
+      type: string
+      enum: [PENDING, ACKNOWLEDGED, SUBMITTED, PARTIALLY_FILLED, FILLED, CANCELLED, REJECTED, EXPIRED]
+      description: |
+        Order lifecycle status:
+        - **PENDING**: Order received, awaiting validation
+        - **ACKNOWLEDGED**: Order validated and accepted
+        - **SUBMITTED**: Order sent to broker
+        - **PARTIALLY_FILLED**: Order partially executed
+        - **FILLED**: Order completely executed
+        - **CANCELLED**: Order cancelled by user or system
+        - **REJECTED**: Order rejected by broker or risk system
+        - **EXPIRED**: Order expired due to time constraints
+
+    TimeInForce:
+      type: string
+      enum: [DAY, GTC, IOC, FOK]
+      description: |
+        Order time validity:
+        - **DAY**: Valid for current trading day
+        - **GTC**: Good Till Cancelled
+        - **IOC**: Immediate Or Cancel
+        - **FOK**: Fill Or Kill
+
+    # ==================== COMMON SCHEMAS ====================
+    Pagination:
+      type: object
+      properties:
+        page:
+          type: integer
+          example: 0
+        size:
+          type: integer
+          example: 20
+        totalElements:
+          type: integer
+          example: 1500
+        totalPages:
+          type: integer
+          example: 75
+        hasNext:
+          type: boolean
+          example: true
+        hasPrevious:
+          type: boolean
+          example: false
+
+    AuditEntry:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        action:
+          type: string
+          example: "ORDER_PLACED"
+        userId:
+          type: string
+        details:
+          type: string
+        correlationId:
+          type: string
+
+    ServiceMetrics:
+      type: object
+      properties:
+        orderStats:
+          type: object
+          properties:
+            totalOrders:
+              type: integer
+            successfulOrders:
+              type: integer
+            failedOrders:
+              type: integer
+            averageExecutionTime:
+              type: number
+              format: double
+        performanceStats:
+          type: object
+          properties:
+            responseTimeP50:
+              type: number
+              format: double
+            responseTimeP95:
+              type: number
+              format: double
+            responseTimeP99:
+              type: number
+              format: double
+            errorRate:
+              type: number
+              format: double
+        systemStats:
+          type: object
+          properties:
+            virtualThreadsActive:
+              type: integer
+            memoryUsage:
+              type: number
+              format: double
+            cpuUsage:
+              type: number
+              format: double
+
+    ErrorResponse:
+      type: object
+      required: [success, error]
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: object
+          required: [code, message, timestamp]
+          properties:
+            code:
+              type: string
+              example: "VALIDATION_ERROR"
+              description: Machine-readable error code
+            message:
+              type: string
+              example: "Invalid order parameters"
+              description: Human-readable error message
+            details:
+              type: string
+              example: "Quantity must be greater than zero"
+              description: Additional error context
+            timestamp:
+              type: string
+              format: date-time
+            correlationId:
+              type: string
+              example: "req-123456"
+              description: Request correlation ID for tracking
+            field:
+              type: string
+              example: "quantity"
+              description: Field causing validation error (if applicable)
+
+    RiskViolationError:
+      allOf:
+        - $ref: '#/components/schemas/ErrorResponse'
+        - type: object
+          properties:
+            error:
+              type: object
+              properties:
+                violations:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/RiskViolation'
+                riskScore:
+                  type: number
+                  format: double
+
+  responses:
+    BadRequest:
+      description: ❌ Invalid request parameters or malformed JSON
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error:
+              code: "VALIDATION_ERROR"
+              message: "Invalid request parameters"
+              details: "quantity must be a positive integer"
+              timestamp: "2024-09-06T10:30:00Z"
+              correlationId: "req-123456"
+
+    Unauthorized:
+      description: 🔒 Authentication required or invalid JWT token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error:
+              code: "AUTHENTICATION_REQUIRED"
+              message: "Valid JWT token required"
+              timestamp: "2024-09-06T10:30:00Z"
+
+    Forbidden:
+      description: 🚫 Insufficient permissions for requested operation
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error:
+              code: "ACCESS_DENIED"
+              message: "Insufficient permissions"
+              timestamp: "2024-09-06T10:30:00Z"
+
+    RateLimited:
+      description: 🚦 Rate limit exceeded
+      headers:
+        X-RateLimit-Limit:
+          description: Request limit per minute
+          schema:
+            type: integer
+        X-RateLimit-Remaining:
+          description: Requests remaining in current window
+          schema:
+            type: integer
+        X-RateLimit-Reset:
+          description: Time when rate limit resets
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error:
+              code: "RATE_LIMIT_EXCEEDED"
+              message: "Too many requests"
+              details: "Limit: 100 requests per minute"
+              timestamp: "2024-09-06T10:30:00Z"
+
+    ServiceUnavailable:
+      description: 🔧 Service temporarily unavailable or under maintenance
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error:
+              code: "SERVICE_UNAVAILABLE"
+              message: "Service temporarily unavailable"
+              details: "High load detected, please retry after 30 seconds"
+              timestamp: "2024-09-06T10:30:00Z"
+
+# ==================== KONG GATEWAY EXTENSIONS ====================
+x-kong-route-defaults:
+  protocols: ["http", "https"]
+  preserve_host: true
+  strip_path: false
+
+x-kong-plugins:
+  - name: cors
+    config:
+      origins:
+        - "https://app.trademaster.com"
+        - "https://admin.trademaster.com"
+      methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+      headers: ["Accept", "Accept-Version", "Content-Length", "Content-MD5", "Content-Type", "Date", "Authorization"]
+      credentials: true
+      max_age: 3600
+
+  - name: rate-limiting
+    config:
+      minute: 1000
+      hour: 50000
+      policy: local
+      fault_tolerant: true
+      hide_client_headers: false
+
+  - name: jwt
+    config:
+      uri_param_names: ["jwt"]
+      cookie_names: ["jwt"]
+      header_names: ["authorization"]
+      claims_to_verify: ["exp", "iat"]
+
+  - name: prometheus
+    config:
+      per_consumer: true
+      status_code_metrics: true
+      latency_metrics: true
+      bandwidth_metrics: true
+
+# ==================== DOCUMENTATION EXTENSIONS ====================
+externalDocs:
+  description: 📚 Complete TradeMaster Trading Service Documentation
+  url: https://github.com/buntythecoder/trademaster-trading-service#readme

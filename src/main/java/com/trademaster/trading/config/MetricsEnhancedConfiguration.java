@@ -2,13 +2,10 @@ package com.trademaster.trading.config;
 
 import com.trademaster.trading.metrics.AlertingService;
 import com.trademaster.trading.metrics.TradingMetricsService;
-import io.micrometer.core.instrument.MeterRegistry;
-import io.micrometer.core.instrument.config.MeterFilter;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.actuate.autoconfigure.metrics.MeterRegistryCustomizer;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.annotation.EnableAsync;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -36,33 +33,18 @@ import java.util.concurrent.CompletableFuture;
 @Configuration
 @EnableAsync
 @EnableScheduling
-@RequiredArgsConstructor
 @Slf4j
 public class MetricsEnhancedConfiguration {
     
     private final TradingMetricsService metricsService;
     private final AlertingService alertingService;
     
-    /**
-     * Customize meter registry with trading-specific configuration
-     */
-    @Bean
-    public MeterRegistryCustomizer<MeterRegistry> metricsCommonTags() {
-        return registry -> registry.config()
-            .commonTags(
-                "application", "trading-service",
-                "environment", getEnvironment(),
-                "instance", getInstanceId(),
-                "version", "2.0.0"
-            )
-            .meterFilter(MeterFilter.deny(id -> {
-                String name = id.getName();
-                // Filter out noisy metrics that aren't useful
-                return name.startsWith("jvm.gc.overhead") ||
-                       name.startsWith("process.files") ||
-                       name.startsWith("system.load.average.1m");
-            }));
+    public MetricsEnhancedConfiguration(@Lazy TradingMetricsService metricsService, 
+                                      @Lazy AlertingService alertingService) {
+        this.metricsService = metricsService;
+        this.alertingService = alertingService;
     }
+    
     
     /**
      * Scheduled task to monitor performance metrics and trigger alerts
@@ -216,13 +198,6 @@ public class MetricsEnhancedConfiguration {
         return new BigDecimal("125000"); // ₹1.25L total PnL
     }
     
-    private String getEnvironment() {
-        return System.getProperty("spring.profiles.active", "development");
-    }
-    
-    private String getInstanceId() {
-        return System.getProperty("instance.id", "trading-service-1");
-    }
     
     /**
      * Health check endpoint for metrics system

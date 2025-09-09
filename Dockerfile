@@ -1,14 +1,18 @@
 # TradeMaster Trading Service - Multi-stage Docker Build
 # Optimized for Java 24 Virtual Threads with production security hardening
-FROM openjdk:24-jdk-slim as builder
+# Using Amazon Corretto 24 (recommended for 2025) instead of deprecated openjdk images
+FROM amazoncorretto:24-alpine-jdk as builder
 
-# Security: Create non-root user for build
-RUN groupadd -r trademaster && useradd -r -g trademaster trademaster
+# Security: Create non-root user for build (Alpine Linux commands)
+RUN addgroup -g 1001 -S trademaster && \
+    adduser -S trademaster -u 1001 -G trademaster
 
-# Install build dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Install build dependencies (Alpine Linux)
+RUN apk update && apk add --no-cache \
     curl \
-    && rm -rf /var/lib/apt/lists/*
+    wget \
+    unzip \
+    && rm -rf /var/cache/apk/*
 
 # Set working directory
 WORKDIR /app
@@ -26,12 +30,16 @@ RUN ./gradlew dependencies --no-daemon
 COPY src/ src/
 
 # Build application with Java 24 preview features
-RUN ./gradlew clean build -x test --no-daemon \
+# IMPORTANT: Ensure Gradle wrapper uses version 8.14+ or 9.0+ for Java 24 support
+RUN ./gradlew --version && \
+    GRADLE_OPTS="--enable-preview -Xmx2g" ./gradlew clean build -x test --no-daemon \
+    --stacktrace --info \
+    && ls -la build/libs/ \
     && mkdir -p target \
-    && cp build/libs/*.jar target/trading-service.jar
+    && find build/libs/ -name "*.jar" ! -name "*plain*" -exec cp {} target/trading-service.jar \;
 
-# Production Image - Distroless for minimal attack surface
-FROM gcr.io/distroless/java21-debian12:nonroot
+# Production Image - Amazon Corretto 24 for secure, up-to-date Java 24 runtime
+FROM amazoncorretto:24-alpine-jdk
 
 # Labels for container metadata
 LABEL maintainer="TradeMaster Development Team"
@@ -53,17 +61,20 @@ ENV JAVA_OPTS="-XX:+UseZGC \
 ENV SERVER_PORT=8083
 ENV MANAGEMENT_SERVER_PORT=9083
 
-# Create application directories
-USER 65532:65532
+# Install curl for health checks and create non-root user (Alpine Linux)
+RUN apk add --no-cache curl && \
+    addgroup -g 1000 -S trademaster && \
+    adduser -u 1000 -S trademaster -G trademaster
+
+# Create application directories and set permissions
+RUN mkdir -p /app /app/logs /opt/trademaster/logs && \
+    chown -R trademaster:trademaster /app /opt/trademaster/logs
 
 # Copy JAR from builder stage
-COPY --from=builder --chown=65532:65532 /app/target/trading-service.jar /app/trading-service.jar
+COPY --from=builder --chown=trademaster:trademaster /app/target/trading-service.jar /app/trading-service.jar
 
-# Create logs directory
-USER root
-RUN mkdir -p /opt/trademaster/logs && \
-    chown -R 65532:65532 /opt/trademaster/logs
-USER 65532:65532
+# Switch to non-root user
+USER trademaster:trademaster
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \

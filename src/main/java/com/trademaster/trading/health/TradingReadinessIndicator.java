@@ -1,8 +1,8 @@
 package com.trademaster.trading.health;
 
 import com.trademaster.trading.repository.OrderRepository;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.actuate.health.Health;
 import org.springframework.boot.actuate.health.HealthIndicator;
 import org.springframework.data.redis.core.RedisTemplate;
@@ -32,16 +32,22 @@ import java.util.concurrent.TimeUnit;
  * @version 1.0.0
  */
 @Component("tradingReadinessIndicator")
-@RequiredArgsConstructor
 @Slf4j
 public class TradingReadinessIndicator implements HealthIndicator {
     
     private final DataSource dataSource;
-    private final RedisTemplate<String, Object> redisTemplate;
     private final OrderRepository orderRepository;
+    
+    @Autowired(required = false)
+    private RedisTemplate<String, Object> redisTemplate;
     
     private static final String READINESS_CHECK_KEY = "trading-service:readiness:check";
     private static final int READINESS_TIMEOUT_MS = 3000;
+    
+    public TradingReadinessIndicator(DataSource dataSource, OrderRepository orderRepository) {
+        this.dataSource = dataSource;
+        this.orderRepository = orderRepository;
+    }
     
     @Override
     public Health health() {
@@ -106,6 +112,11 @@ public class TradingReadinessIndicator implements HealthIndicator {
     
     private CompletableFuture<Boolean> checkRedisReadiness() {
         return CompletableFuture.supplyAsync(() -> {
+            if (redisTemplate == null) {
+                log.debug("Redis not configured, skipping Redis readiness check");
+                return true; // Consider Redis check as passed if not configured
+            }
+            
             try {
                 String testValue = "readiness-" + System.currentTimeMillis();
                 redisTemplate.opsForValue().set(READINESS_CHECK_KEY, testValue, 30, TimeUnit.SECONDS);

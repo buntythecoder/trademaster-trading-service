@@ -150,7 +150,7 @@ public class SecurityMonitoringConfig {
         private final MeterRegistry meterRegistry;
         
         @Bean
-        public void registerSecurityMetrics() {
+        public String registerSecurityMetrics() {
             // Register Prometheus gauges for security metrics
             Gauge.builder("trading_security_events_total", securityAuditService,
                     service -> service.getSecurityMetrics().get("totalSecurityEvents").doubleValue())
@@ -178,6 +178,7 @@ public class SecurityMonitoringConfig {
                 .register(meterRegistry);
             
             log.info("Security metrics registered with Prometheus");
+            return "securityMetricsRegistered";
         }
     }
     

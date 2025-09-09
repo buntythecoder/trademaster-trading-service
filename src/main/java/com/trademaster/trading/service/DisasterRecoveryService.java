@@ -68,8 +68,8 @@ public class DisasterRecoveryService {
      * Scheduled every 15 minutes to meet RPO of 1 minute with redundancy
      */
     @Scheduled(fixedRate = 900000) // 15 minutes
-    public CompletableFuture<BackupResult> performAutomatedBackup() {
-        return CompletableFuture.supplyAsync(() -> {
+    public void performAutomatedBackup() {
+        CompletableFuture.supplyAsync(() -> {
             if (!disasterRecoveryEnabled) {
                 return BackupResult.skipped("Disaster recovery disabled");
             }
@@ -93,6 +93,9 @@ public class DisasterRecoveryService {
                 log.error("Critical error during automated backup", e);
                 return BackupResult.failed("Backup procedure failed: " + e.getMessage());
             }
+        }).exceptionally(throwable -> {
+            log.error("Unexpected error in automated backup", throwable);
+            return BackupResult.failed("Unexpected backup error: " + throwable.getMessage());
         });
     }
     
@@ -188,8 +191,8 @@ public class DisasterRecoveryService {
      * Recovery testing automation - runs weekly
      */
     @Scheduled(cron = "0 0 2 * * SUN") // Sundays at 2 AM
-    public CompletableFuture<RecoveryTestResult> performRecoveryTest() {
-        return CompletableFuture.supplyAsync(() -> {
+    public void performRecoveryTest() {
+        CompletableFuture.supplyAsync(() -> {
             if (!disasterRecoveryEnabled) {
                 return RecoveryTestResult.skipped("Disaster recovery disabled");
             }
@@ -213,6 +216,9 @@ public class DisasterRecoveryService {
                 log.error("Critical error during recovery test", e);
                 return RecoveryTestResult.failed("Recovery test failed: " + e.getMessage());
             }
+        }).exceptionally(throwable -> {
+            log.error("Unexpected error in recovery test", throwable);
+            return RecoveryTestResult.failed("Unexpected recovery test error: " + throwable.getMessage());
         });
     }
     

@@ -1,0 +1,40 @@
+spring:
+  application:
+    name: trading-service
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:consul}
+  
+  # Consul Configuration Management
+  cloud:
+    consul:
+      host: ${CONSUL_HOST:localhost}
+      port: ${CONSUL_PORT:8500}
+      discovery:
+        enabled: true
+        register: false  # Don't register during bootstrap
+        catalog-services-watch:
+          enabled: false # Reduce startup time
+      config:
+        enabled: true
+        format: YAML
+        # Use hierarchical configuration keys
+        prefix: config
+        default-context: application
+        profile-separator: ','
+        data-key: data
+        # Watch for configuration changes
+        watch:
+          enabled: true
+          delay: 1000
+          wait-time: 55
+        # Configuration hierarchy: application -> service -> profile
+        prefixes:
+          - config/application/
+          - config/${spring.application.name}/
+          - config/${spring.application.name},${spring.profiles.active}/
+        fail-fast: false  # Allow startup without consul config
+
+# Logging during bootstrap
+logging:
+  level:
+    org.springframework.cloud.consul: DEBUG
