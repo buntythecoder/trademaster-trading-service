@@ -101,8 +101,11 @@ public class SecurityConfig {
             )
             
             .authorizeHttpRequests(auth -> auth
-                // Public endpoints for health checks and monitoring (broad pattern first)
-                .requestMatchers("/actuator/**").permitAll()
+                // Public health and monitoring endpoints (MUST BE FIRST - order matters!)
+                .requestMatchers("/actuator/health", "/actuator/prometheus", "/actuator/info").permitAll()
+                .requestMatchers("/api/internal/*/actuator/health", "/api/internal/*/actuator/prometheus", "/api/internal/*/actuator/info").permitAll()
+                .requestMatchers("/api/internal/trading/actuator/health", "/api/internal/trading/actuator/prometheus", "/api/internal/trading/actuator/info").permitAll()
+                .requestMatchers("/health").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
                 
                 // Allow basic access to root and error pages (for Docker health checks)

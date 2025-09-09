@@ -20,31 +20,35 @@ import java.io.IOException;
 import java.util.List;
 
 /**
- * Service API Key Authentication Filter
+ * Service API Key Authentication Filter - Kong Dynamic Integration
  * 
- * Provides authentication for service-to-service communication using API keys.
- * This filter runs before JWT authentication and handles internal service calls.
+ * Updated to work with Kong API Gateway dynamic API keys instead of hardcoded keys.
+ * Recognizes Kong consumer headers when API key validation is performed by Kong.
+ * Falls back to direct API key validation when needed.
  * 
  * Security Features:
- * - API key validation for internal services
+ * - Kong consumer header recognition (X-Consumer-ID, X-Consumer-Username)
+ * - Dynamic API key validation through Kong
  * - Request path filtering (only /api/internal/*)
  * - Audit logging for service authentication
  * - Fail-safe authentication bypass for health checks
  * 
  * @author TradeMaster Development Team
- * @version 1.0.0
+ * @version 2.0.0 (Kong Integration)
  */
 @Component
 @Order(1) // Run before JWT filter
 @Slf4j
 public class ServiceApiKeyFilter implements Filter {
     
-    private static final String API_KEY_HEADER = "X-Service-API-Key";
+    private static final String API_KEY_HEADER = "X-API-Key";
     private static final String SERVICE_ID_HEADER = "X-Service-ID";
+    private static final String KONG_CONSUMER_ID_HEADER = "X-Consumer-ID";
+    private static final String KONG_CONSUMER_USERNAME_HEADER = "X-Consumer-Username";
     private static final String INTERNAL_API_PATH = "/api/internal/";
     
     @Value("${trademaster.security.service.api-key:}")
-    private String masterServiceApiKey;
+    private String fallbackServiceApiKey;
     
     @Value("${trademaster.security.service.enabled:true}")
     private boolean serviceAuthEnabled;
@@ -66,78 +70,51 @@ public class ServiceApiKeyFilter implements Filter {
         
         // Skip authentication if disabled (for local development)
         if (!serviceAuthEnabled) {
-            log.warn("Service authentication is DISABLED - allowing internal API access");
+            log.warn("ServiceApiKeyFilter: Service authentication is DISABLED - allowing internal API access");
             setServiceAuthentication("development-service");
             chain.doFilter(request, response);
             return;
         }
         
+        // Check for Kong consumer headers first (Kong has already validated the API key)
+        String kongConsumerId = httpRequest.getHeader(KONG_CONSUMER_ID_HEADER);
+        String kongConsumerUsername = httpRequest.getHeader(KONG_CONSUMER_USERNAME_HEADER);
+        
+        // If Kong consumer headers are present, Kong has already validated the API key
+        if (StringUtils.hasText(kongConsumerId) && StringUtils.hasText(kongConsumerUsername)) {
+            log.info("ServiceApiKeyFilter: Kong validated consumer '{}' (ID: {}), granting SERVICE access", 
+                     kongConsumerUsername, kongConsumerId);
+            setServiceAuthentication(kongConsumerUsername);
+            chain.doFilter(request, response);
+            return;
+        }
+        
+        // Fall back to direct API key validation (for direct service calls not through Kong)
         String apiKey = httpRequest.getHeader(API_KEY_HEADER);
-        String serviceId = httpRequest.getHeader(SERVICE_ID_HEADER);
         
         if (!StringUtils.hasText(apiKey)) {
-            log.error("Missing API key for internal service request: {} from {}", 
+            log.error("ServiceApiKeyFilter: No Kong consumer headers and missing X-API-Key header for request: {} from {}", 
                      requestPath, httpRequest.getRemoteAddr());
-            sendUnauthorizedResponse(httpResponse, "Missing service API key");
+            sendUnauthorizedResponse(httpResponse, "Missing service API key or Kong consumer headers");
             return;
         }
         
-        if (!StringUtils.hasText(serviceId)) {
-            log.error("Missing service ID for internal service request: {} from {}", 
+        // For fallback validation, we can use a simple check or integrate with your existing validation logic
+        if (StringUtils.hasText(fallbackServiceApiKey) && !fallbackServiceApiKey.equals(apiKey)) {
+            log.error("ServiceApiKeyFilter: Invalid API key for direct service request: {} from {}", 
                      requestPath, httpRequest.getRemoteAddr());
-            sendUnauthorizedResponse(httpResponse, "Missing service ID");
+            sendUnauthorizedResponse(httpResponse, "Invalid service API key");
             return;
         }
         
-        // Validate API key
-        if (!isValidServiceApiKey(apiKey, serviceId)) {
-            log.error("Invalid API key for service '{}' requesting: {} from {}", 
-                     serviceId, requestPath, httpRequest.getRemoteAddr());
-            sendUnauthorizedResponse(httpResponse, "Invalid service credentials");
-            return;
-        }
+        // Set service authentication for fallback case
+        setServiceAuthentication("direct-service-call");
         
-        // Set service authentication in security context
-        setServiceAuthentication(serviceId);
-        
-        log.info("Service authentication successful: {} accessing {}", serviceId, requestPath);
+        log.info("ServiceApiKeyFilter: Direct API key authentication successful for request: {}", requestPath);
         
         chain.doFilter(request, response);
     }
     
-    /**
-     * Validate service API key
-     */
-    private boolean isValidServiceApiKey(String apiKey, String serviceId) {
-        // For now, use master API key for all services
-        // In production, you might have service-specific keys stored in database/vault
-        if (!StringUtils.hasText(masterServiceApiKey)) {
-            log.error("Master service API key not configured");
-            return false;
-        }
-        
-        // Simple validation - in production, use more sophisticated validation
-        boolean isValid = masterServiceApiKey.equals(apiKey) && isKnownService(serviceId);
-        
-        if (!isValid) {
-            log.error("API key validation failed for service: {}", serviceId);
-        }
-        
-        return isValid;
-    }
-    
-    /**
-     * Check if service ID is in our known services list
-     */
-    private boolean isKnownService(String serviceId) {
-        return List.of(
-            "event-bus-service",
-            "broker-auth-service", 
-            "portfolio-service",
-            "notification-service",
-            "risk-service"
-        ).contains(serviceId);
-    }
     
     /**
      * Set service authentication in Spring Security context
