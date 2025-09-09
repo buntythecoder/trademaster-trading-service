@@ -30,6 +30,14 @@ spring:
   application:
     name: trading-service
   
+  # ✅ CONSUL CONFIG IMPORT (MANDATORY for Spring Boot 2.4+)
+  config:
+    import: "optional:consul:"
+  
+  # ✅ Allow bean definition overriding for Consul health indicator
+  main:
+    allow-bean-definition-overriding: true
+  
   # MANDATORY: Java 24 Virtual Threads Configuration (Rule #1)
   threads:
     virtual:
@@ -51,9 +59,9 @@ spring:
   
   # JPA/Hibernate Configuration for PostgreSQL with Virtual Threads
   datasource:
-    url: jdbc:postgresql://localhost:5432/trademaster_trading
-    username: ${POSTGRES_USER:trademaster_user}
-    password: ${POSTGRES_PASSWORD:trademaster_pass}
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/trademaster_trading}
+    username: ${DATABASE_USERNAME:trading_user}
+    password: ${DATABASE_PASSWORD:trading_pass}
     driver-class-name: org.postgresql.Driver
     hikari:
       pool-name: TradingServiceCP
@@ -100,24 +108,13 @@ spring:
   
   # Flyway Configuration for database migrations
   flyway:
-    url: jdbc:postgresql://localhost:5432/trademaster_trading
-    user: ${POSTGRES_USER:trademaster_user}
-    password: ${POSTGRES_PASSWORD:trademaster_pass}
+    enabled: ${SPRING_FLYWAY_ENABLED:true}
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/trademaster_trading}
+    user: ${DATABASE_USERNAME:trading_user}
+    password: ${DATABASE_PASSWORD:trading_pass}
     baseline-on-migrate: true
     locations: classpath:db/migration
   
-  # Virtual Threads Configuration
-  threads:
-    virtual:
-      enabled: true
-  
-  # Cloud Configuration
-  cloud:
-    discovery:
-      enabled: true
-      client:
-        health-indicator:
-          enabled: true
   
   # Caching Configuration
   cache:
@@ -125,6 +122,43 @@ spring:
     redis:
       time-to-live: 300s  # 5 minutes default TTL
       cache-null-values: false
+  
+  # Cloud Configuration with Consul Service Discovery
+  cloud:
+    discovery:
+      enabled: true
+      client:
+        health-indicator:
+          enabled: true
+    consul:
+      host: ${CONSUL_HOST:localhost}
+      port: ${CONSUL_PORT:8500}
+      scheme: ${CONSUL_SCHEME:http}
+      discovery:
+        enabled: true
+        register: true
+        deregister: true
+        prefer-ip-address: true
+        instance-id: ${spring.application.name}:${server.port}:${random.uuid}
+        service-name: ${spring.application.name}
+        hostname: ${HOSTNAME:localhost}
+        port: ${server.port}
+        health-check-path: /api/v2/health
+        health-check-interval: 10s
+        health-check-timeout: 3s
+        health-check-critical-timeout: 30s
+        ip-address: ${HOST_IP:127.0.0.1}
+        tags:
+          - trading-service
+          - microservice
+          - java24
+          - virtual-threads
+        metadata:
+          version: "2.0.0"
+          profile: "${spring.profiles.active:default}"
+          service_type: trading
+          virtual_threads: enabled
+          java_version: "24"
 
 # Management and Monitoring
 management:
@@ -287,34 +321,7 @@ springdoc:
     path: /swagger-ui.html
     operations-sorter: method
 
-# Eureka Service Discovery Configuration
-eureka:
-  client:
-    service-url:
-      defaultZone: ${EUREKA_URL:http://localhost:8761/eureka/}
-    enabled: true
-    fetch-registry: true
-    register-with-eureka: true
-    registry-fetch-interval-seconds: 30
-    instance-info-replication-interval-seconds: 30
-    eureka-connection-idle-timeout-seconds: 30
-  instance:
-    hostname: ${HOSTNAME:localhost}
-    instance-id: ${spring.application.name}:${server.port}:${random.uuid}
-    prefer-ip-address: true
-    ip-address: ${HOST_IP:127.0.0.1}
-    status-page-url-path: /actuator/info
-    health-check-url-path: /actuator/health
-    lease-renewal-interval-in-seconds: 30
-    lease-expiration-duration-in-seconds: 90
-    metadata-map:
-      "version": "@project.version@"
-      "git-version": "@git.commit.id.describe@"
-      "git-commit": "@git.commit.id.abbrev@"
-      "profile": "${spring.profiles.active:default}"
-      "service-type": "trading"
-      "virtual-threads": "enabled"
-      "java-version": "24"
+# Consul Service Discovery Configuration has been moved to main spring section above
 
 # Security configuration
 security:
@@ -428,6 +435,7 @@ spring:
     redis:
       host: redis
   flyway:
+    enabled: ${SPRING_FLYWAY_ENABLED:true}
     url: jdbc:postgresql://postgres:5432/trademaster_trading
 
 ---
