@@ -62,27 +62,51 @@ UPDATE positions SET realized_pnl = 0 WHERE realized_pnl IS NULL;
 UPDATE positions SET trade_count = 0 WHERE trade_count IS NULL;
 UPDATE positions SET borrowing_cost = 0 WHERE borrowing_cost IS NULL;
 
--- Add business logic constraints
-ALTER TABLE positions ADD CONSTRAINT positions_margin_requirement_positive 
-    CHECK (margin_requirement IS NULL OR margin_requirement >= 0);
+-- Add business logic constraints (only if they don't exist)
+DO $$
+BEGIN
+    -- positions_margin_requirement_positive
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'positions_margin_requirement_positive') THEN
+        ALTER TABLE positions ADD CONSTRAINT positions_margin_requirement_positive 
+            CHECK (margin_requirement IS NULL OR margin_requirement >= 0);
+    END IF;
     
-ALTER TABLE positions ADD CONSTRAINT positions_margin_utilization_valid 
-    CHECK (margin_utilization IS NULL OR (margin_utilization >= 0 AND margin_utilization <= 100));
+    -- positions_margin_utilization_valid
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'positions_margin_utilization_valid') THEN
+        ALTER TABLE positions ADD CONSTRAINT positions_margin_utilization_valid 
+            CHECK (margin_utilization IS NULL OR (margin_utilization >= 0 AND margin_utilization <= 100));
+    END IF;
     
-ALTER TABLE positions ADD CONSTRAINT positions_risk_score_valid 
-    CHECK (risk_score IS NULL OR (risk_score >= 0 AND risk_score <= 1));
+    -- positions_risk_score_valid
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'positions_risk_score_valid') THEN
+        ALTER TABLE positions ADD CONSTRAINT positions_risk_score_valid 
+            CHECK (risk_score IS NULL OR (risk_score >= 0 AND risk_score <= 1));
+    END IF;
     
-ALTER TABLE positions ADD CONSTRAINT positions_portfolio_weight_valid 
-    CHECK (portfolio_weight IS NULL OR (portfolio_weight >= 0 AND portfolio_weight <= 100));
+    -- positions_portfolio_weight_valid
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'positions_portfolio_weight_valid') THEN
+        ALTER TABLE positions ADD CONSTRAINT positions_portfolio_weight_valid 
+            CHECK (portfolio_weight IS NULL OR (portfolio_weight >= 0 AND portfolio_weight <= 100));
+    END IF;
     
-ALTER TABLE positions ADD CONSTRAINT positions_trade_count_positive 
-    CHECK (trade_count >= 0);
+    -- positions_trade_count_positive
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'positions_trade_count_positive') THEN
+        ALTER TABLE positions ADD CONSTRAINT positions_trade_count_positive 
+            CHECK (trade_count >= 0);
+    END IF;
     
-ALTER TABLE positions ADD CONSTRAINT positions_side_valid 
-    CHECK (side IS NULL OR side IN ('LONG', 'SHORT'));
+    -- positions_side_valid
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'positions_side_valid') THEN
+        ALTER TABLE positions ADD CONSTRAINT positions_side_valid 
+            CHECK (side IS NULL OR side IN ('LONG', 'SHORT'));
+    END IF;
     
-ALTER TABLE positions ADD CONSTRAINT positions_pending_quantity_positive 
-    CHECK (pending_quantity >= 0);
+    -- positions_pending_quantity_positive
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'positions_pending_quantity_positive') THEN
+        ALTER TABLE positions ADD CONSTRAINT positions_pending_quantity_positive 
+            CHECK (pending_quantity >= 0);
+    END IF;
+END $$;
 
 -- Ensure all required indexes exist for performance
 CREATE INDEX IF NOT EXISTS idx_positions_user_id ON positions(user_id);

@@ -5,6 +5,7 @@ import com.trademaster.trading.health.TradingLivenessIndicator;
 import com.trademaster.trading.health.TradingReadinessIndicator;
 import com.trademaster.trading.health.TradingServiceHealthIndicator;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.actuate.health.Health;
 import org.springframework.http.ResponseEntity;
@@ -33,16 +34,25 @@ import java.util.concurrent.TimeUnit;
  */
 @RestController
 @RequestMapping("/gateway")
-@RequiredArgsConstructor
 @Slf4j
 public class GatewayController {
-    
+
     private final TradingServiceHealthIndicator serviceHealthIndicator;
-    private final BrokerConnectivityHealthIndicator brokerHealthIndicator;
     private final TradingReadinessIndicator readinessIndicator;
     private final TradingLivenessIndicator livenessIndicator;
-    
+
+    @Autowired(required = false)
+    private BrokerConnectivityHealthIndicator brokerHealthIndicator;
+
     private static final int HEALTH_CHECK_TIMEOUT_MS = 5000;
+
+    public GatewayController(TradingServiceHealthIndicator serviceHealthIndicator,
+                           TradingReadinessIndicator readinessIndicator,
+                           TradingLivenessIndicator livenessIndicator) {
+        this.serviceHealthIndicator = serviceHealthIndicator;
+        this.readinessIndicator = readinessIndicator;
+        this.livenessIndicator = livenessIndicator;
+    }
     
     /**
      * Comprehensive health check for API Gateway
@@ -56,17 +66,21 @@ public class GatewayController {
             // Run all health checks in parallel
             CompletableFuture<Health> serviceHealth = CompletableFuture
                 .supplyAsync(serviceHealthIndicator::health);
-            CompletableFuture<Health> brokerHealth = CompletableFuture
-                .supplyAsync(brokerHealthIndicator::health);
+            CompletableFuture<Health> brokerHealth = brokerHealthIndicator != null ?
+                CompletableFuture.supplyAsync(brokerHealthIndicator::health) :
+                CompletableFuture.completedFuture(Health.up()
+                    .withDetail("status", "DISABLED")
+                    .withDetail("message", "Broker connectivity health check is disabled")
+                    .build());
             CompletableFuture<Health> readinessHealth = CompletableFuture
                 .supplyAsync(readinessIndicator::health);
             CompletableFuture<Health> livenessHealth = CompletableFuture
                 .supplyAsync(livenessIndicator::health);
-                
+
             // Wait for all checks with timeout
             CompletableFuture.allOf(serviceHealth, brokerHealth, readinessHealth, livenessHealth)
                 .get(HEALTH_CHECK_TIMEOUT_MS, TimeUnit.MILLISECONDS);
-            
+
             Health service = serviceHealth.join();
             Health broker = brokerHealth.join();
             Health readiness = readinessHealth.join();
@@ -190,7 +204,12 @@ public class GatewayController {
     public ResponseEntity<StatusResponse> status() {
         try {
             Health service = serviceHealthIndicator.health();
-            Health broker = brokerHealthIndicator.health();
+            Health broker = brokerHealthIndicator != null ?
+                brokerHealthIndicator.health() :
+                Health.up()
+                    .withDetail("status", "DISABLED")
+                    .withDetail("message", "Broker connectivity health check is disabled")
+                    .build();
             
             Runtime runtime = Runtime.getRuntime();
             long totalMemory = runtime.totalMemory();

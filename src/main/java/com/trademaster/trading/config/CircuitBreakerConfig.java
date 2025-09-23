@@ -8,6 +8,7 @@ import io.github.resilience4j.timelimiter.TimeLimiterConfig;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 
 import java.time.Duration;
 import java.util.concurrent.TimeoutException;
@@ -218,6 +219,7 @@ public class CircuitBreakerConfig {
      * For all network-dependent operations
      */
     @Bean
+    @Primary
     public CircuitBreaker networkOperationsCircuitBreaker(CircuitBreakerRegistry registry) {
         var config = io.github.resilience4j.circuitbreaker.CircuitBreakerConfig.custom()
             .slidingWindowType(SlidingWindowType.COUNT_BASED)

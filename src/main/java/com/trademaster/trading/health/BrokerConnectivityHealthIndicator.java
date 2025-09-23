@@ -5,6 +5,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.actuate.health.Health;
 import org.springframework.boot.actuate.health.HealthIndicator;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 
@@ -31,6 +32,7 @@ import java.util.concurrent.TimeUnit;
 @Component
 @RequiredArgsConstructor
 @Slf4j
+@ConditionalOnProperty(name = "management.health.brokerconnectivity.enabled", havingValue = "true", matchIfMissing = false)
 public class BrokerConnectivityHealthIndicator implements HealthIndicator {
     
     private final BrokerAuthClient brokerAuthClient;

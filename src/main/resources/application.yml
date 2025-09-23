@@ -178,6 +178,7 @@ spring:
         hostname: ${HOSTNAME:localhost}
         port: ${server.port}
         health-check-path: /actuator/health
+        health-check-url: http://${HOSTNAME:localhost}:${MANAGEMENT_SERVER_PORT:9083}/actuator/health
         health-check-interval: 10s
         health-check-timeout: 3s
         health-check-critical-timeout: 30s
@@ -198,6 +199,8 @@ spring:
 
 # Management and Monitoring
 management:
+  server:
+    port: ${MANAGEMENT_SERVER_PORT:9083}
   endpoints:
     web:
       exposure:
@@ -214,6 +217,12 @@ management:
       show-components: always
       probes:
         enabled: true
+      status:
+        http-mapping:
+          DOWN: 503
+          OUT_OF_SERVICE: 503
+          UP: 200
+          UNKNOWN: 200
       group:
         readiness:
           include: readinessState,tradingReadinessIndicator,db,redis
@@ -230,6 +239,12 @@ management:
       enabled: true
     livenessstate:
       enabled: true
+    defaults:
+      enabled: true
+    status:
+      order: UP,UNKNOWN,DOWN
+    brokerconnectivity:
+      enabled: false
   metrics:
     export:
       prometheus:
@@ -591,3 +606,17 @@ disaster-recovery:
     enabled: ${CROSS_REGION_REPLICATION_ENABLED:true}
     regions: ${REPLICATION_REGIONS:us-west-2,eu-west-1}
     lag-threshold-seconds: ${REPLICATION_LAG_THRESHOLD:30}
+
+# TradeMaster HTTP Client Configuration (Trading Service Optimized)
+trademaster:
+  http:
+    connection-pool:
+      max-total: ${HTTP_POOL_MAX_TOTAL:100}               # Higher capacity for trading operations
+      max-per-route: ${HTTP_POOL_MAX_PER_ROUTE:50}        # More connections per route for trading
+      validate-after-inactivity: ${HTTP_POOL_VALIDATE_AFTER_INACTIVITY:2000}
+    timeout:
+      connection: ${HTTP_TIMEOUT_CONNECTION:3000}         # Faster timeout for trading (3s)
+      socket: ${HTTP_TIMEOUT_SOCKET:8000}                 # 8s socket timeout
+      request: ${HTTP_TIMEOUT_REQUEST:5000}               # 5s request timeout
+    keep-alive:
+      duration: ${HTTP_KEEP_ALIVE_DURATION:30000}         # 30s keep-alive
