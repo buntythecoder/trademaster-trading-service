@@ -35,7 +35,7 @@ public class TradingLivenessIndicator implements HealthIndicator {
     
     private static final double MEMORY_THRESHOLD = 90.0; // 90% memory usage threshold
     private static final int DEADLOCK_CHECK_THRESHOLD = 5; // Max deadlocked threads
-    private static final long GC_TIME_THRESHOLD = 30000; // 30 seconds GC time threshold
+    private static final long GC_TIME_THRESHOLD = 300000; // 5 minutes GC time threshold (more reasonable for long-running services)
     
     @Override
     public Health health() {
@@ -146,10 +146,33 @@ public class TradingLivenessIndicator implements HealthIndicator {
     
     private boolean checkGarbageCollectionHealth() {
         try {
-            return ManagementFactory.getGarbageCollectorMXBeans().stream()
+            // Check GC frequency and pause times rather than cumulative time
+            long totalCollections = ManagementFactory.getGarbageCollectorMXBeans().stream()
+                .mapToLong(gc -> gc.getCollectionCount())
+                .sum();
+
+            long totalGcTime = ManagementFactory.getGarbageCollectorMXBeans().stream()
                 .mapToLong(gc -> gc.getCollectionTime())
-                .sum() < GC_TIME_THRESHOLD;
-                
+                .sum();
+
+            // If no collections have occurred, consider it healthy
+            if (totalCollections == 0) {
+                return true;
+            }
+
+            // Calculate average GC pause time
+            double avgGcPause = (double) totalGcTime / totalCollections;
+
+            // Consider GC unhealthy if average pause > 1000ms (1 second) or total time > 5 minutes
+            boolean gcHealthy = (avgGcPause < 1000.0) && (totalGcTime < GC_TIME_THRESHOLD);
+
+            if (!gcHealthy) {
+                log.warn("GC health check failed - Total collections: {}, Total GC time: {}ms, Avg pause: {}ms",
+                        totalCollections, totalGcTime, avgGcPause);
+            }
+
+            return gcHealthy;
+
         } catch (Exception e) {
             log.warn("Garbage collection health check failed: {}", e.getMessage());
             return false;

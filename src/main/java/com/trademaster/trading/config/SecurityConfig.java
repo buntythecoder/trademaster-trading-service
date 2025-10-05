@@ -112,7 +112,8 @@ public class SecurityConfig {
                 .requestMatchers("/", "/error", "/favicon.ico").permitAll()
                 
                 // Internal service API endpoints - authenticated by ServiceApiKeyFilter
-                .requestMatchers("/api/internal/**").hasRole("SERVICE")
+                // Use permitAll() here - ServiceApiKeyFilter handles authentication
+                .requestMatchers("/api/internal/**").permitAll()
                 
                 // Trading endpoints require JWT authentication
                 .requestMatchers("/api/v1/orders/**").authenticated()

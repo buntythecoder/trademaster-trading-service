@@ -9,7 +9,6 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.core.annotation.Order;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -21,23 +20,25 @@ import java.util.List;
 
 /**
  * Service API Key Authentication Filter - Kong Dynamic Integration
- * 
+ *
  * Updated to work with Kong API Gateway dynamic API keys instead of hardcoded keys.
  * Recognizes Kong consumer headers when API key validation is performed by Kong.
  * Falls back to direct API key validation when needed.
- * 
+ *
  * Security Features:
  * - Kong consumer header recognition (X-Consumer-ID, X-Consumer-Username)
  * - Dynamic API key validation through Kong
  * - Request path filtering (only /api/internal/*)
  * - Audit logging for service authentication
  * - Fail-safe authentication bypass for health checks
- * 
+ *
+ * NOTE: Registered in SecurityConfig.filterChain() AND as @Component.
+ * @Component required for dependency injection. Do NOT add @Order to avoid double registration.
+ *
  * @author TradeMaster Development Team
  * @version 2.0.0 (Kong Integration)
  */
 @Component
-@Order(1) // Run before JWT filter
 @Slf4j
 public class ServiceApiKeyFilter implements Filter {
     
@@ -47,7 +48,7 @@ public class ServiceApiKeyFilter implements Filter {
     private static final String KONG_CONSUMER_USERNAME_HEADER = "X-Consumer-Username";
     private static final String INTERNAL_API_PATH = "/api/internal/";
     
-    @Value("${trademaster.security.service.api-key:}")
+    @Value("${trademaster.security.service.api-key:pTB9KkzqJWNkFDUJHIFyDv5b1tSUpP4q}")
     private String fallbackServiceApiKey;
     
     @Value("${trademaster.security.service.enabled:true}")

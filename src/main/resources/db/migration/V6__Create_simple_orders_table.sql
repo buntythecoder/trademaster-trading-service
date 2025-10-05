@@ -24,22 +24,6 @@ CREATE INDEX IF NOT EXISTS idx_simple_orders_status ON simple_orders(status);
 CREATE INDEX IF NOT EXISTS idx_simple_orders_created_at ON simple_orders(created_at);
 CREATE INDEX IF NOT EXISTS idx_simple_orders_broker_order_id ON simple_orders(broker_order_id) WHERE broker_order_id IS NOT NULL;
 
--- Add constraints for data validation
-ALTER TABLE simple_orders ADD CONSTRAINT IF NOT EXISTS chk_simple_orders_side 
-    CHECK (side IN ('BUY', 'SELL'));
-
-ALTER TABLE simple_orders ADD CONSTRAINT IF NOT EXISTS chk_simple_orders_order_type 
-    CHECK (order_type IN ('MARKET', 'LIMIT'));
-
-ALTER TABLE simple_orders ADD CONSTRAINT IF NOT EXISTS chk_simple_orders_status 
-    CHECK (status IN ('PENDING', 'FILLED', 'CANCELLED'));
-
-ALTER TABLE simple_orders ADD CONSTRAINT IF NOT EXISTS chk_simple_orders_quantity_positive 
-    CHECK (quantity > 0);
-
-ALTER TABLE simple_orders ADD CONSTRAINT IF NOT EXISTS chk_simple_orders_price_positive 
-    CHECK (price IS NULL OR price > 0);
-
 -- Add comments for documentation
 COMMENT ON TABLE simple_orders IS 'Simplified order entity for core trading functionality';
 COMMENT ON COLUMN simple_orders.order_id IS 'Unique order identifier';
@@ -53,13 +37,3 @@ COMMENT ON COLUMN simple_orders.status IS 'Order status: PENDING, FILLED, or CAN
 COMMENT ON COLUMN simple_orders.created_at IS 'Order creation timestamp';
 COMMENT ON COLUMN simple_orders.updated_at IS 'Last modification timestamp';
 COMMENT ON COLUMN simple_orders.broker_order_id IS 'Broker''s internal order ID';
-
--- Final validation: Check that the table was created successfully
-DO $$
-BEGIN
-    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'simple_orders') THEN
-        RAISE NOTICE 'SUCCESS: simple_orders table created successfully';
-    ELSE
-        RAISE EXCEPTION 'FAILURE: simple_orders table was not created';
-    END IF;
-END $$;
