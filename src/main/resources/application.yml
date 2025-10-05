@@ -142,7 +142,7 @@ spring:
   
   # Flyway Configuration for database migrations
   flyway:
-    enabled: ${SPRING_FLYWAY_ENABLED:false}
+    enabled: ${SPRING_FLYWAY_ENABLED:true}
     url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/trademaster_trading}
     user: ${DATABASE_USERNAME:trading_user}
     password: ${DATABASE_PASSWORD:trading_pass}
@@ -180,7 +180,6 @@ spring:
         service-name: ${spring.application.name}
         hostname: ${HOSTNAME:localhost}
         port: ${server.port}
-        health-check-path: /actuator/health
         health-check-url: http://${HOSTNAME:localhost}:${MANAGEMENT_SERVER_PORT:9083}/actuator/health
         health-check-interval: 10s
         health-check-timeout: 3s
