@@ -10,6 +10,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Position Snapshot DTO
@@ -353,15 +354,18 @@ public class PositionSnapshot {
     
     /**
      * Get position size as percentage of portfolio
+     * Uses Optional to eliminate if-statement
      */
     public BigDecimal getPortfolioWeight(BigDecimal totalPortfolioValue) {
-        if (positionDetails == null || positionDetails.getMarketValue() == null ||
-            totalPortfolioValue == null || totalPortfolioValue.compareTo(BigDecimal.ZERO) == 0) {
-            return BigDecimal.ZERO;
-        }
-        return positionDetails.getMarketValue()
-               .divide(totalPortfolioValue, 4, java.math.RoundingMode.HALF_UP)
-               .multiply(BigDecimal.valueOf(100));
+        // Eliminates complex if-statement with nested Optional chain
+        return Optional.ofNullable(positionDetails)
+            .flatMap(pd -> Optional.ofNullable(pd.getMarketValue()))
+            .flatMap(marketValue -> Optional.ofNullable(totalPortfolioValue)
+                .filter(total -> total.compareTo(BigDecimal.ZERO) != 0)
+                .map(total -> marketValue
+                    .divide(total, 4, java.math.RoundingMode.HALF_UP)
+                    .multiply(BigDecimal.valueOf(100))))
+            .orElse(BigDecimal.ZERO);
     }
     
     /**
@@ -374,13 +378,13 @@ public class PositionSnapshot {
     
     /**
      * Get holding period in days
+     * Uses Optional to eliminate if-statement
      */
     public Integer getHoldingPeriodDays() {
-        if (positionDetails == null || positionDetails.getFirstTradeDate() == null) {
-            return 0;
-        }
-        LocalDate firstTrade = positionDetails.getFirstTradeDate();
-        return (int) java.time.temporal.ChronoUnit.DAYS.between(firstTrade, LocalDate.now());
+        return Optional.ofNullable(positionDetails)
+            .flatMap(pd -> Optional.ofNullable(pd.getFirstTradeDate()))
+            .map(firstTrade -> (int) java.time.temporal.ChronoUnit.DAYS.between(firstTrade, LocalDate.now()))
+            .orElse(0);
     }
     
     /**
@@ -392,12 +396,12 @@ public class PositionSnapshot {
     
     /**
      * Get position concentration score
+     * Uses Optional to eliminate if-statement
      */
     public BigDecimal getConcentrationScore() {
-        if (riskMetrics != null && riskMetrics.getConcentrationRisk() != null) {
-            return riskMetrics.getConcentrationRisk();
-        }
-        return BigDecimal.ZERO;
+        return Optional.ofNullable(riskMetrics)
+            .flatMap(rm -> Optional.ofNullable(rm.getConcentrationRisk()))
+            .orElse(BigDecimal.ZERO);
     }
     
     /**
@@ -410,51 +414,72 @@ public class PositionSnapshot {
     
     /**
      * Get critical alerts only
+     * Uses Optional to eliminate if-statement
      */
     public List<PositionAlert> getCriticalAlerts() {
-        if (activeAlerts == null) return List.of();
-        return activeAlerts.stream()
-               .filter(alert -> "CRITICAL".equals(alert.getSeverity()))
-               .toList();
+        return Optional.ofNullable(activeAlerts)
+            .map(alerts -> alerts.stream()
+                .filter(alert -> "CRITICAL".equals(alert.getSeverity()))
+                .toList())
+            .orElse(List.of());
     }
     
     /**
      * Calculate break-even price
+     * Uses Optional to eliminate complex if-statement
      */
     public BigDecimal getBreakEvenPrice() {
-        if (costBasis == null || costBasis.getAverageCostPrice() == null ||
-            tradingActivity == null || tradingActivity.getTradingCosts() == null ||
-            positionDetails == null || positionDetails.getTotalQuantity() == null ||
-            positionDetails.getTotalQuantity() == 0) {
-            return BigDecimal.ZERO;
-        }
-        
-        BigDecimal totalCost = costBasis.getTotalCostBasis().add(tradingActivity.getTradingCosts());
-        return totalCost.divide(BigDecimal.valueOf(positionDetails.getTotalQuantity()), 
-                               4, java.math.RoundingMode.HALF_UP);
+        return Optional.ofNullable(costBasis)
+            .flatMap(cb -> Optional.ofNullable(cb.getTotalCostBasis()))
+            .flatMap(totalCostBasis -> Optional.ofNullable(tradingActivity)
+                .flatMap(ta -> Optional.ofNullable(ta.getTradingCosts()))
+                .map(tradingCosts -> totalCostBasis.add(tradingCosts)))
+            .flatMap(totalCost -> Optional.ofNullable(positionDetails)
+                .flatMap(pd -> Optional.ofNullable(pd.getTotalQuantity()))
+                .filter(quantity -> quantity != 0)
+                .map(quantity -> totalCost.divide(
+                    BigDecimal.valueOf(quantity),
+                    4,
+                    java.math.RoundingMode.HALF_UP)))
+            .orElse(BigDecimal.ZERO);
     }
     
     /**
      * Get position summary for reporting
+     * Uses Optional to eliminate ternary operators
      */
     public Map<String, Object> getPositionSummary() {
         Map<String, Object> summary = new java.util.HashMap<>();
-        summary.put("symbol", symbol != null ? symbol : "N/A");
-        summary.put("quantity", positionDetails != null && positionDetails.getTotalQuantity() != null ? 
-                   positionDetails.getTotalQuantity() : 0);
-        summary.put("marketValue", positionDetails != null && positionDetails.getMarketValue() != null ? 
-                  positionDetails.getMarketValue() : BigDecimal.ZERO);
-        summary.put("unrealizedPnL", pnlBreakdown != null && pnlBreakdown.getUnrealizedPnL() != null ? 
-                    pnlBreakdown.getUnrealizedPnL() : BigDecimal.ZERO);
-        summary.put("percentReturn", pnlBreakdown != null && pnlBreakdown.getPercentReturn() != null ? 
-                    pnlBreakdown.getPercentReturn() : BigDecimal.ZERO);
-        summary.put("riskLevel", riskMetrics != null && riskMetrics.getRiskLevel() != null ? 
-                riskMetrics.getRiskLevel() : "UNKNOWN");
+
+        summary.put("symbol", Optional.ofNullable(symbol).orElse("N/A"));
+
+        summary.put("quantity", Optional.ofNullable(positionDetails)
+            .flatMap(pd -> Optional.ofNullable(pd.getTotalQuantity()))
+            .orElse(0));
+
+        summary.put("marketValue", Optional.ofNullable(positionDetails)
+            .flatMap(pd -> Optional.ofNullable(pd.getMarketValue()))
+            .orElse(BigDecimal.ZERO));
+
+        summary.put("unrealizedPnL", Optional.ofNullable(pnlBreakdown)
+            .flatMap(pnl -> Optional.ofNullable(pnl.getUnrealizedPnL()))
+            .orElse(BigDecimal.ZERO));
+
+        summary.put("percentReturn", Optional.ofNullable(pnlBreakdown)
+            .flatMap(pnl -> Optional.ofNullable(pnl.getPercentReturn()))
+            .orElse(BigDecimal.ZERO));
+
+        summary.put("riskLevel", Optional.ofNullable(riskMetrics)
+            .flatMap(rm -> Optional.ofNullable(rm.getRiskLevel()))
+            .orElse("UNKNOWN"));
+
         summary.put("isProfitable", isProfitable());
         summary.put("isAtRisk", isAtRisk());
         summary.put("hasMarginCall", hasMarginCall());
         summary.put("holdingDays", getHoldingPeriodDays());
-        summary.put("snapshotTime", snapshotTime != null ? snapshotTime : Instant.EPOCH);
+
+        summary.put("snapshotTime", Optional.ofNullable(snapshotTime).orElse(Instant.EPOCH));
+
         return java.util.Collections.unmodifiableMap(summary);
     }
     

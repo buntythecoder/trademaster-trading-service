@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.*;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Simple Trading Controller
@@ -49,7 +50,9 @@ public class SimpleTradingController {
     @GetMapping("/orders/{orderId}")
     public ResponseEntity<SimpleOrder> getOrder(@PathVariable String orderId) {
         SimpleOrder order = tradingService.getOrder(orderId);
-        return order != null ? ResponseEntity.ok(order) : ResponseEntity.notFound().build();
+        return Optional.ofNullable(order)
+            .map(ResponseEntity::ok)
+            .orElseGet(() -> ResponseEntity.notFound().build());
     }
     
     /**
@@ -67,7 +70,9 @@ public class SimpleTradingController {
     @DeleteMapping("/orders/{orderId}")
     public ResponseEntity<SimpleOrder> cancelOrder(@PathVariable String orderId) {
         SimpleOrder order = tradingService.cancelOrder(orderId);
-        return order != null ? ResponseEntity.ok(order) : ResponseEntity.notFound().build();
+        return Optional.ofNullable(order)
+            .map(ResponseEntity::ok)
+            .orElseGet(() -> ResponseEntity.notFound().build());
     }
     
     /**

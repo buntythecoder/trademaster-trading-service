@@ -22,7 +22,9 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Stream;
 
 /**
  * Security Monitoring Configuration
@@ -53,28 +55,37 @@ public class SecurityMonitoringConfig {
         @Override
         public Health health() {
             Map<String, Long> metrics = securityAuditService.getSecurityMetrics();
-            
+
             // Evaluate security health
             long failedAttempts = metrics.get("failedAuthenticationAttempts");
             long suspiciousActivity = metrics.get("suspiciousActivityDetected");
             long accessDenied = metrics.get("accessDeniedEvents");
-            
-            Health.Builder healthBuilder = Health.up();
-            
-            // Warning conditions
-            if (failedAttempts > 50) {
-                healthBuilder = Health.down()
-                    .withDetail("reason", "High authentication failure rate")
-                    .withDetail("failedAttempts", failedAttempts);
-            } else if (suspiciousActivity > 10) {
-                healthBuilder = Health.down()
-                    .withDetail("reason", "High suspicious activity detected")
-                    .withDetail("suspiciousEvents", suspiciousActivity);
-            } else if (failedAttempts > 20 || suspiciousActivity > 5) {
-                healthBuilder = Health.unknown()
-                    .withDetail("reason", "Elevated security activity");
-            }
-            
+
+            // Eliminates if-else chain with Stream pattern using threshold records
+            record HealthThreshold(java.util.function.Predicate<Map<String, Long>> condition,
+                                  java.util.function.Function<Map<String, Long>, Health.Builder> builder) {}
+
+            Health.Builder healthBuilder = Stream.of(
+                new HealthThreshold(
+                    m -> m.get("failedAuthenticationAttempts") > 50,
+                    m -> Health.down()
+                        .withDetail("reason", "High authentication failure rate")
+                        .withDetail("failedAttempts", m.get("failedAuthenticationAttempts"))),
+                new HealthThreshold(
+                    m -> m.get("suspiciousActivityDetected") > 10,
+                    m -> Health.down()
+                        .withDetail("reason", "High suspicious activity detected")
+                        .withDetail("suspiciousEvents", m.get("suspiciousActivityDetected"))),
+                new HealthThreshold(
+                    m -> m.get("failedAuthenticationAttempts") > 20 || m.get("suspiciousActivityDetected") > 5,
+                    m -> Health.unknown()
+                        .withDetail("reason", "Elevated security activity"))
+            )
+            .filter(threshold -> threshold.condition().test(metrics))
+            .findFirst()
+            .map(threshold -> threshold.builder().apply(metrics))
+            .orElse(Health.up());
+
             return healthBuilder
                 .withDetail("totalEvents", metrics.get("totalSecurityEvents"))
                 .withDetail("failedAttempts", failedAttempts)
@@ -112,10 +123,20 @@ public class SecurityMonitoringConfig {
         private String calculateSecurityHealth(Map<String, Long> metrics) {
             long failed = metrics.get("failedAuthenticationAttempts");
             long suspicious = metrics.get("suspiciousActivityDetected");
-            
-            if (failed > 50 || suspicious > 10) return "CRITICAL";
-            if (failed > 20 || suspicious > 5) return "WARNING";
-            return "HEALTHY";
+
+            // Eliminates if-else chain with Stream pattern using threshold records
+            record HealthLevel(java.util.function.Predicate<Map<String, Long>> condition, String level) {}
+
+            return Stream.of(
+                new HealthLevel(m -> m.get("failedAuthenticationAttempts") > 50 ||
+                                    m.get("suspiciousActivityDetected") > 10, "CRITICAL"),
+                new HealthLevel(m -> m.get("failedAuthenticationAttempts") > 20 ||
+                                    m.get("suspiciousActivityDetected") > 5, "WARNING")
+            )
+            .filter(level -> level.condition().test(metrics))
+            .findFirst()
+            .map(HealthLevel::level)
+            .orElse("HEALTHY");
         }
         
         private Map<String, Object> calculateActiveAlerts(Map<String, Long> metrics) {
@@ -128,14 +149,29 @@ public class SecurityMonitoringConfig {
         }
         
         private Map<String, String> generateRecommendations(Map<String, Long> metrics) {
-            return Map.of(
-                "authentication", metrics.get("failedAuthenticationAttempts") > 10 ? 
-                    "Consider implementing CAPTCHA or account lockout" : "Authentication levels normal",
-                "monitoring", metrics.get("suspiciousActivityDetected") > 3 ? 
-                    "Review suspicious activity patterns" : "No immediate action required",
-                "access", metrics.get("accessDeniedEvents") > 5 ? 
-                    "Review access control policies" : "Access patterns normal"
-            );
+            // Eliminates all 3 ternaries with Stream pattern using threshold records
+            record RecommendationThreshold(String key, long threshold, String metricKey,
+                                          String actionMessage, String normalMessage) {
+                String getMessage(Map<String, Long> m) {
+                    return Optional.of(m.get(metricKey) > threshold)
+                        .filter(Boolean::booleanValue)
+                        .map(exceeded -> actionMessage)
+                        .orElse(normalMessage);
+                }
+            }
+
+            return Stream.of(
+                new RecommendationThreshold("authentication", 10, "failedAuthenticationAttempts",
+                    "Consider implementing CAPTCHA or account lockout", "Authentication levels normal"),
+                new RecommendationThreshold("monitoring", 3, "suspiciousActivityDetected",
+                    "Review suspicious activity patterns", "No immediate action required"),
+                new RecommendationThreshold("access", 5, "accessDeniedEvents",
+                    "Review access control policies", "Access patterns normal")
+            )
+            .collect(java.util.stream.Collectors.toMap(
+                RecommendationThreshold::key,
+                rec -> rec.getMessage(metrics)
+            ));
         }
     }
     
@@ -193,12 +229,12 @@ public class SecurityMonitoringConfig {
         private final AtomicLong lastReportTime = new AtomicLong(System.currentTimeMillis());
         
         /**
-         * Hourly security metrics report
+         * Hourly security metrics report - eliminates if-statements with Optional
          */
         @Scheduled(fixedRate = 3600000) // 1 hour
         public void generateHourlySecurityReport() {
             Map<String, Long> metrics = securityAuditService.getSecurityMetrics();
-            
+
             log.info("=== Hourly Security Report ===");
             log.info("Total Security Events: {}", metrics.get("totalSecurityEvents"));
             log.info("Failed Authentication Attempts: {}", metrics.get("failedAuthenticationAttempts"));
@@ -206,16 +242,16 @@ public class SecurityMonitoringConfig {
             log.info("Access Denied Events: {}", metrics.get("accessDeniedEvents"));
             log.info("Unique Active IPs: {}", metrics.get("uniqueIPs"));
             log.info("Users with Failed Attempts: {}", metrics.get("usersWithFailures"));
-            
-            // Check for concerning patterns
-            if (metrics.get("failedAuthenticationAttempts") > 20) {
-                log.warn("HIGH ALERT: Authentication failure rate is elevated");
-            }
-            
-            if (metrics.get("suspiciousActivityDetected") > 5) {
-                log.warn("HIGH ALERT: Multiple suspicious activities detected");
-            }
-            
+
+            // Check for concerning patterns - eliminates if-statements with Optional
+            Optional.of(metrics.get("failedAuthenticationAttempts"))
+                .filter(attempts -> attempts > 20)
+                .ifPresent(attempts -> log.warn("HIGH ALERT: Authentication failure rate is elevated"));
+
+            Optional.of(metrics.get("suspiciousActivityDetected"))
+                .filter(activities -> activities > 5)
+                .ifPresent(activities -> log.warn("HIGH ALERT: Multiple suspicious activities detected"));
+
             lastReportTime.set(System.currentTimeMillis());
         }
         
@@ -229,47 +265,49 @@ public class SecurityMonitoringConfig {
         }
         
         /**
-         * Security configuration validation
+         * Security configuration validation - eliminates if-statement with Optional
          */
         @Scheduled(fixedRate = 1800000) // 30 minutes
         public void validateSecurityConfiguration() {
             try {
                 // Validate security components are functioning
                 Map<String, Long> metrics = securityAuditService.getSecurityMetrics();
-                
-                // Check if metrics are being collected
-                if (metrics.get("totalSecurityEvents") == 0) {
-                    log.warn("Security metrics collection may not be functioning properly");
-                }
-                
+
+                // Check if metrics are being collected - eliminates if-statement with Optional
+                Optional.of(metrics.get("totalSecurityEvents"))
+                    .filter(events -> events == 0)
+                    .ifPresent(events -> log.warn("Security metrics collection may not be functioning properly"));
+
                 log.debug("Security configuration validation completed successfully");
-                
+
             } catch (Exception e) {
                 log.error("Security configuration validation failed", e);
             }
         }
         
         /**
-         * Threat pattern analysis
+         * Threat pattern analysis - eliminates if-statements with Optional
          */
         @Scheduled(fixedRate = 900000) // 15 minutes
         public void analyzeThreatPatterns() {
             try {
                 Map<String, Long> metrics = securityAuditService.getSecurityMetrics();
-                
+
                 // Analyze patterns for automated response
                 long recentFailures = metrics.get("failedAuthenticationAttempts");
                 long suspiciousEvents = metrics.get("suspiciousActivityDetected");
-                
-                if (recentFailures > 15 && suspiciousEvents > 3) {
-                    log.warn("THREAT ANALYSIS: Coordinated attack pattern detected - " +
-                           "Failures: {} Suspicious: {}", recentFailures, suspiciousEvents);
-                }
-                
-                if (metrics.get("uniqueIPs") > 50 && recentFailures > 10) {
-                    log.warn("THREAT ANALYSIS: Distributed brute force attack suspected");
-                }
-                
+
+                // Eliminates if-statement with Optional pattern
+                Optional.of(recentFailures)
+                    .filter(failures -> failures > 15 && suspiciousEvents > 3)
+                    .ifPresent(failures -> log.warn("THREAT ANALYSIS: Coordinated attack pattern detected - " +
+                           "Failures: {} Suspicious: {}", failures, suspiciousEvents));
+
+                // Eliminates if-statement with Optional pattern
+                Optional.of(metrics.get("uniqueIPs"))
+                    .filter(ips -> ips > 50 && recentFailures > 10)
+                    .ifPresent(ips -> log.warn("THREAT ANALYSIS: Distributed brute force attack suspected"));
+
             } catch (Exception e) {
                 log.error("Threat pattern analysis failed", e);
             }

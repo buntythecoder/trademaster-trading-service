@@ -12,6 +12,7 @@ import org.springframework.web.client.RestTemplate;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -91,11 +92,16 @@ public class SimpleTradingService {
      */
     public SimpleOrder cancelOrder(String orderId) {
         SimpleOrder order = orderRepository.findByOrderId(orderId).orElse(null);
-        if (order != null && "PENDING".equals(order.getStatus())) {
-            order.setStatus("CANCELLED");
-            order = orderRepository.save(order);
-            log.info("Order {} cancelled", orderId);
-        }
+
+        // Eliminates if-statement using Optional.ofNullable().filter().ifPresent()
+        Optional.ofNullable(order)
+            .filter(o -> "PENDING".equals(o.getStatus()))
+            .ifPresent(o -> {
+                o.setStatus("CANCELLED");
+                orderRepository.save(o);
+                log.info("Order {} cancelled", orderId);
+            });
+
         return order;
     }
     
@@ -104,10 +110,11 @@ public class SimpleTradingService {
      */
     private String submitToBroker(SimpleOrder order) {
         try {
+            // Eliminates ternary operator using Optional.ofNullable().orElse()
             Map<String, Object> brokerRequest = Map.of(
                 "symbol", order.getSymbol(),
                 "quantity", order.getQuantity(),
-                "price", order.getPrice() != null ? order.getPrice() : BigDecimal.ZERO,
+                "price", Optional.ofNullable(order.getPrice()).orElse(BigDecimal.ZERO),
                 "orderType", order.getOrderType(),
                 "orderSide", order.getSide(),
                 "userId", order.getUserId().toString(),
@@ -123,12 +130,13 @@ public class SimpleTradingService {
             String url = brokerAuthServiceUrl + "/broker-auth/orders/submit";
             
             ResponseEntity<Map> response = restTemplate.postForEntity(url, request, Map.class);
-            
-            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                return (String) response.getBody().get("brokerOrderId");
-            } else {
-                throw new RuntimeException("Broker submission failed: " + response.getStatusCode());
-            }
+
+            // Eliminates if-else using Optional.of().filter().flatMap() chain
+            return Optional.of(response)
+                .filter(r -> r.getStatusCode().is2xxSuccessful())
+                .flatMap(r -> Optional.ofNullable(r.getBody())
+                    .map(body -> (String) body.get("brokerOrderId")))
+                .orElseThrow(() -> new RuntimeException("Broker submission failed: " + response.getStatusCode()));
             
         } catch (Exception e) {
             log.error("Failed to submit to broker: {}", e.getMessage());

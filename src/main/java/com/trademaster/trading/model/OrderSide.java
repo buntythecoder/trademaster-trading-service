@@ -30,9 +30,12 @@ public enum OrderSide {
     }
     
     /**
-     * Get the opposite side for hedging operations
+     * Get the opposite side for hedging operations - eliminates ternary with switch expression
      */
     public OrderSide opposite() {
-        return this == BUY ? SELL : BUY;
+        return switch (this) {
+            case BUY -> SELL;
+            case SELL -> BUY;
+        };
     }
 }

@@ -11,6 +11,7 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.annotation.Scheduled;
 
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
 /**
@@ -90,6 +91,7 @@ public class TradingAgentOSConfig {
     
     /**
      * Schedules periodic health checks and performance reporting
+     * Uses Optional to eliminate if-statement
      */
     @Scheduled(fixedRate = 30000) // Every 30 seconds
     @Async
@@ -97,17 +99,19 @@ public class TradingAgentOSConfig {
         try {
             // Perform agent health check
             tradingAgent.performHealthCheck();
-            
+
             // Log health metrics
             Double healthScore = tradingAgent.getHealthScore();
             log.debug("Trading Agent health check completed - Score: {}", healthScore);
-            
-            // Alert if health score is low
-            if (healthScore < 0.7) {
-                log.warn("Trading Agent health score is low: {} - investigating capabilities", healthScore);
-                logCapabilityHealth();
-            }
-            
+
+            // Alert if health score is low - eliminates if-statement with Optional
+            Optional.ofNullable(healthScore)
+                .filter(score -> score < 0.7)
+                .ifPresent(score -> {
+                    log.warn("Trading Agent health score is low: {} - investigating capabilities", score);
+                    logCapabilityHealth();
+                });
+
         } catch (Exception e) {
             log.error("Scheduled health check failed", e);
         }
@@ -133,6 +137,7 @@ public class TradingAgentOSConfig {
     
     /**
      * Performs capability health monitoring and optimization
+     * Uses Optional to eliminate nested if-statements
      */
     @Scheduled(fixedRate = 120000) // Every 2 minutes
     @Async
@@ -142,19 +147,24 @@ public class TradingAgentOSConfig {
                 Double healthScore = capabilityRegistry.getCapabilityHealthScore(capability);
                 Double successRate = capabilityRegistry.getCapabilitySuccessRate(capability);
                 Double avgTime = capabilityRegistry.getCapabilityAverageExecutionTime(capability);
-                
-                if (healthScore < 0.5) {
-                    log.warn("Capability {} health is critical - Health: {}, Success Rate: {}, Avg Time: {}ms", 
-                            capability, healthScore, successRate, avgTime);
-                    
-                    // Consider resetting metrics if needed
-                    if (successRate < 0.3) {
-                        log.info("Resetting metrics for underperforming capability: {}", capability);
-                        capabilityRegistry.resetCapabilityMetrics(capability);
-                    }
-                }
+
+                // Eliminates nested if-statements with Optional chaining
+                Optional.ofNullable(healthScore)
+                    .filter(score -> score < 0.5)
+                    .ifPresent(score -> {
+                        log.warn("Capability {} health is critical - Health: {}, Success Rate: {}, Avg Time: {}ms",
+                                capability, score, successRate, avgTime);
+
+                        // Consider resetting metrics if needed - nested Optional
+                        Optional.ofNullable(successRate)
+                            .filter(rate -> rate < 0.3)
+                            .ifPresent(rate -> {
+                                log.info("Resetting metrics for underperforming capability: {}", capability);
+                                capabilityRegistry.resetCapabilityMetrics(capability);
+                            });
+                    });
             });
-            
+
         } catch (Exception e) {
             log.error("Capability health monitoring failed", e);
         }

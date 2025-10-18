@@ -1,7 +1,7 @@
 package com.trademaster.trading.service;
 
 import com.trademaster.trading.entity.Order;
-import com.trademaster.trading.common.Result;
+import com.trademaster.common.functional.Result;
 import com.trademaster.trading.common.TradeError;
 import com.trademaster.trading.dto.PortfolioSnapshot;
 

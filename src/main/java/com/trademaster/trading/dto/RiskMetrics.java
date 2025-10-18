@@ -10,6 +10,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Risk Metrics DTO
@@ -333,83 +334,83 @@ public class RiskMetrics {
      */
     
     /**
-     * Get overall risk level
+     * Get overall risk level - eliminates if-statement with Optional
      */
     public String getOverallRiskLevel() {
-        if (realTimeIndicators != null && realTimeIndicators.getRiskLevel() != null) {
-            return realTimeIndicators.getRiskLevel();
-        }
-        return "UNKNOWN";
+        return Optional.ofNullable(realTimeIndicators)
+            .flatMap(rti -> Optional.ofNullable(rti.getRiskLevel()))
+            .orElse("UNKNOWN");
     }
     
     /**
-     * Check if metrics are stale
+     * Check if metrics are stale - eliminates if-statement with Optional
      */
     public boolean isStale(int maxAgeMinutes) {
-        if (calculatedAt == null) return true;
-        Instant threshold = Instant.now().minusSeconds(maxAgeMinutes * 60L);
-        return calculatedAt.isBefore(threshold);
+        return Optional.ofNullable(calculatedAt)
+            .map(calculated -> {
+                Instant threshold = Instant.now().minusSeconds(maxAgeMinutes * 60L);
+                return calculated.isBefore(threshold);
+            })
+            .orElse(true);
     }
     
     /**
-     * Get risk score as percentage
+     * Get risk score as percentage - eliminates if-statement with Optional
      */
     public BigDecimal getRiskScorePercent() {
-        if (realTimeIndicators != null && realTimeIndicators.getRiskScore() != null) {
-            return realTimeIndicators.getRiskScore();
-        }
-        return BigDecimal.ZERO;
+        return Optional.ofNullable(realTimeIndicators)
+            .flatMap(rti -> Optional.ofNullable(rti.getRiskScore()))
+            .orElse(BigDecimal.ZERO);
     }
     
     /**
-     * Check if any critical alerts are active
+     * Check if any critical alerts are active - eliminates if-statement with Optional
      */
     public boolean hasCriticalAlerts() {
-        if (realTimeIndicators != null && realTimeIndicators.getActiveAlerts() != null) {
-            return realTimeIndicators.getActiveAlerts().stream()
-                .anyMatch(alert -> alert.contains("CRITICAL"));
-        }
-        return false;
+        return Optional.ofNullable(realTimeIndicators)
+            .flatMap(rti -> Optional.ofNullable(rti.getActiveAlerts()))
+            .map(alerts -> alerts.stream().anyMatch(alert -> alert.contains("CRITICAL")))
+            .orElse(false);
     }
     
     /**
-     * Get VaR utilization percentage
+     * Get VaR utilization percentage - eliminates if-statement with Optional
      */
     public BigDecimal getVaRUtilization(BigDecimal varLimit) {
-        if (varMetrics == null || varMetrics.getOneDayVaR95() == null || varLimit == null) {
-            return BigDecimal.ZERO;
-        }
-        return varMetrics.getOneDayVaR95().divide(varLimit, 4, java.math.RoundingMode.HALF_UP)
-               .multiply(BigDecimal.valueOf(100));
+        return Optional.ofNullable(varMetrics)
+            .flatMap(vm -> Optional.ofNullable(vm.getOneDayVaR95()))
+            .flatMap(var -> Optional.ofNullable(varLimit)
+                .map(limit -> var.divide(limit, 4, java.math.RoundingMode.HALF_UP)
+                    .multiply(BigDecimal.valueOf(100))))
+            .orElse(BigDecimal.ZERO);
     }
     
     /**
-     * Get effective portfolio beta
+     * Get effective portfolio beta - eliminates if-statement with Optional
      */
     public BigDecimal getEffectiveBeta() {
-        if (correlationMetrics != null && correlationMetrics.getPortfolioBeta() != null) {
-            return correlationMetrics.getPortfolioBeta();
-        }
-        return BigDecimal.ONE; // Default beta of 1.0
+        return Optional.ofNullable(correlationMetrics)
+            .flatMap(cm -> Optional.ofNullable(cm.getPortfolioBeta()))
+            .orElse(BigDecimal.ONE); // Default beta of 1.0
     }
     
     /**
-     * Calculate risk-adjusted return (Sharpe ratio)
+     * Calculate risk-adjusted return (Sharpe ratio) - eliminates if-statement with Optional
      */
     public BigDecimal calculateSharpeRatio(BigDecimal riskFreeRate) {
-        if (performanceAttribution == null || 
-            performanceAttribution.getTotalReturn() == null ||
-            volatilityMetrics == null ||
-            volatilityMetrics.getAnnualizedVolatility() == null) {
-            return BigDecimal.ZERO;
-        }
-        
-        BigDecimal excessReturn = performanceAttribution.getTotalReturn().subtract(riskFreeRate);
-        return excessReturn.divide(volatilityMetrics.getAnnualizedVolatility(), 4, java.math.RoundingMode.HALF_UP);
+        return Optional.ofNullable(performanceAttribution)
+            .flatMap(pa -> Optional.ofNullable(pa.getTotalReturn())
+                .flatMap(totalReturn -> Optional.ofNullable(volatilityMetrics)
+                    .flatMap(vm -> Optional.ofNullable(vm.getAnnualizedVolatility())
+                        .map(annualizedVol -> {
+                            BigDecimal excessReturn = totalReturn.subtract(riskFreeRate);
+                            return excessReturn.divide(annualizedVol, 4, java.math.RoundingMode.HALF_UP);
+                        }))))
+            .orElse(BigDecimal.ZERO);
     }
     
     /**
-     * Get metrics summary
+     * Get metrics summary - eliminates all 3 ternaries with Optional patterns
      */
     public Map<String, Object> getMetricsSummary() {
         return Map.of(
@@ -417,10 +418,11 @@ public class RiskMetrics {
             "riskScore", getRiskScorePercent(),
             "isStale", isStale(15), // 15 minutes staleness threshold
             "hasCriticalAlerts", hasCriticalAlerts(),
-            "lastUpdate", calculatedAt != null ? calculatedAt : Instant.EPOCH,
-            "alertsCount", realTimeIndicators != null && realTimeIndicators.getAlertsCount() != null ? 
-                         realTimeIndicators.getAlertsCount() : 0,
-            "confidenceLevel", confidenceLevel != null ? confidenceLevel : 95
+            "lastUpdate", Optional.ofNullable(calculatedAt).orElse(Instant.EPOCH),
+            "alertsCount", Optional.ofNullable(realTimeIndicators)
+                .flatMap(rti -> Optional.ofNullable(rti.getAlertsCount()))
+                .orElse(0),
+            "confidenceLevel", Optional.ofNullable(confidenceLevel).orElse(95)
         );
     }
     

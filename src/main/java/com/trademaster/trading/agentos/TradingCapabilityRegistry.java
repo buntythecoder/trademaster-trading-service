@@ -7,9 +7,11 @@ import org.springframework.stereotype.Component;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Stream;
 
 /**
  * Trading Capability Registry
@@ -51,80 +53,84 @@ public class TradingCapabilityRegistry {
     }
     
     /**
-     * Records successful execution of a capability
+     * Records successful execution of a capability - eliminates if-statement with Optional
      */
     public void recordSuccessfulExecution(String capability) {
-        CapabilityMetrics metrics = capabilityMetrics.get(capability);
-        if (metrics != null) {
-            metrics.recordSuccess();
-            log.debug("Recorded successful execution for capability: {}", capability);
-        }
+        Optional.ofNullable(capabilityMetrics.get(capability))
+            .ifPresent(metrics -> {
+                metrics.recordSuccess();
+                log.debug("Recorded successful execution for capability: {}", capability);
+            });
     }
     
     /**
-     * Records failed execution of a capability
+     * Records failed execution of a capability - eliminates if-statement with Optional
      */
     public void recordFailedExecution(String capability, Exception error) {
-        CapabilityMetrics metrics = capabilityMetrics.get(capability);
-        if (metrics != null) {
-            metrics.recordFailure(error);
-            log.warn("Recorded failed execution for capability: {} - Error: {}", 
-                    capability, error.getMessage());
-        }
+        Optional.ofNullable(capabilityMetrics.get(capability))
+            .ifPresent(metrics -> {
+                metrics.recordFailure(error);
+                log.warn("Recorded failed execution for capability: {} - Error: {}",
+                        capability, error.getMessage());
+            });
     }
     
     /**
-     * Records execution time for performance tracking
+     * Records execution time for performance tracking - eliminates if-statement with Optional
      */
     public void recordExecutionTime(String capability, Duration executionTime) {
-        CapabilityMetrics metrics = capabilityMetrics.get(capability);
-        if (metrics != null) {
-            metrics.recordExecutionTime(executionTime);
-            log.debug("Recorded execution time for capability: {} - Duration: {}ms", 
-                    capability, executionTime.toMillis());
-        }
+        Optional.ofNullable(capabilityMetrics.get(capability))
+            .ifPresent(metrics -> {
+                metrics.recordExecutionTime(executionTime);
+                log.debug("Recorded execution time for capability: {} - Duration: {}ms",
+                        capability, executionTime.toMillis());
+            });
     }
     
     /**
-     * Gets current health score for a specific capability
+     * Gets current health score for a specific capability - eliminates ternary with Optional
      */
     public Double getCapabilityHealthScore(String capability) {
-        CapabilityMetrics metrics = capabilityMetrics.get(capability);
-        return metrics != null ? metrics.getHealthScore() : 0.0;
+        return Optional.ofNullable(capabilityMetrics.get(capability))
+            .map(CapabilityMetrics::getHealthScore)
+            .orElse(0.0);
     }
-    
+
     /**
-     * Gets success rate for a specific capability
+     * Gets success rate for a specific capability - eliminates ternary with Optional
      */
     public Double getCapabilitySuccessRate(String capability) {
-        CapabilityMetrics metrics = capabilityMetrics.get(capability);
-        return metrics != null ? metrics.getSuccessRate() : 0.0;
+        return Optional.ofNullable(capabilityMetrics.get(capability))
+            .map(CapabilityMetrics::getSuccessRate)
+            .orElse(0.0);
     }
-    
+
     /**
-     * Gets average execution time for a specific capability
+     * Gets average execution time for a specific capability - eliminates ternary with Optional
      */
     public Double getCapabilityAverageExecutionTime(String capability) {
-        CapabilityMetrics metrics = capabilityMetrics.get(capability);
-        return metrics != null ? metrics.getAverageExecutionTime() : 0.0;
+        return Optional.ofNullable(capabilityMetrics.get(capability))
+            .map(CapabilityMetrics::getAverageExecutionTime)
+            .orElse(0.0);
     }
     
     /**
-     * Calculates overall agent health score across all capabilities
+     * Calculates overall agent health score across all capabilities - eliminates if-statement with Optional
      */
     public Double calculateOverallHealthScore() {
-        if (capabilityMetrics.isEmpty()) {
-            return 0.0;
-        }
-        
-        double totalHealth = capabilityMetrics.values().stream()
-                .mapToDouble(CapabilityMetrics::getHealthScore)
-                .sum();
-        
-        double overallHealth = totalHealth / capabilityMetrics.size();
-        
-        log.debug("Calculated overall health score: {}", overallHealth);
-        return overallHealth;
+        return Optional.of(capabilityMetrics)
+            .filter(metrics -> !metrics.isEmpty())
+            .map(metrics -> {
+                double totalHealth = metrics.values().stream()
+                        .mapToDouble(CapabilityMetrics::getHealthScore)
+                        .sum();
+
+                double overallHealth = totalHealth / metrics.size();
+
+                log.debug("Calculated overall health score: {}", overallHealth);
+                return overallHealth;
+            })
+            .orElse(0.0);
     }
     
     /**
@@ -146,14 +152,14 @@ public class TradingCapabilityRegistry {
     }
     
     /**
-     * Resets metrics for a specific capability
+     * Resets metrics for a specific capability - eliminates if-statement with Optional
      */
     public void resetCapabilityMetrics(String capability) {
-        CapabilityMetrics metrics = capabilityMetrics.get(capability);
-        if (metrics != null) {
-            metrics.reset();
-            log.info("Reset metrics for capability: {}", capability);
-        }
+        Optional.ofNullable(capabilityMetrics.get(capability))
+            .ifPresent(metrics -> {
+                metrics.reset();
+                log.info("Reset metrics for capability: {}", capability);
+            });
     }
     
     /**
@@ -196,14 +202,26 @@ public class TradingCapabilityRegistry {
             executionCount.incrementAndGet();
         }
         
+        /**
+         * Gets success rate - eliminates ternary with Optional for division-by-zero protection
+         */
         public Double getSuccessRate() {
             long total = successCount.get() + failureCount.get();
-            return total > 0 ? (double) successCount.get() / total : 1.0;
+            return Optional.of(total)
+                .filter(t -> t > 0)
+                .map(t -> (double) successCount.get() / t)
+                .orElse(1.0);
         }
-        
+
+        /**
+         * Gets average execution time - eliminates ternary with Optional for division-by-zero protection
+         */
         public Double getAverageExecutionTime() {
             int count = executionCount.get();
-            return count > 0 ? (double) totalExecutionTime.get() / count : 0.0;
+            return Optional.of(count)
+                .filter(c -> c > 0)
+                .map(c -> (double) totalExecutionTime.get() / c)
+                .orElse(0.0);
         }
         
         public Double getHealthScore() {
@@ -217,25 +235,45 @@ public class TradingCapabilityRegistry {
                    (recency * 0.15);
         }
         
+        /**
+         * Calculate recency score - eliminates if-else chain with Stream pattern
+         */
         private Double getRecencyScore() {
             Duration timeSinceLastExecution = Duration.between(lastExecution, LocalDateTime.now());
             long minutesSinceExecution = timeSinceLastExecution.toMinutes();
-            
-            // Score decreases over time, 1.0 if executed within 5 minutes
-            if (minutesSinceExecution <= 5) return 1.0;
-            if (minutesSinceExecution <= 30) return 0.8;
-            if (minutesSinceExecution <= 120) return 0.6;
-            if (minutesSinceExecution <= 360) return 0.4;
-            return 0.2;
+
+            // Score decreases over time - use functional pattern with threshold records
+            record TimeThreshold(long maxMinutes, double score) {}
+
+            return Stream.of(
+                new TimeThreshold(5, 1.0),    // Within 5 minutes
+                new TimeThreshold(30, 0.8),   // Within 30 minutes
+                new TimeThreshold(120, 0.6),  // Within 2 hours
+                new TimeThreshold(360, 0.4)   // Within 6 hours
+            )
+            .filter(threshold -> minutesSinceExecution <= threshold.maxMinutes())
+            .findFirst()
+            .map(TimeThreshold::score)
+            .orElse(0.2);  // More than 6 hours
         }
         
+        /**
+         * Calculate performance score - eliminates if-else chain with Stream pattern
+         */
         private Double getPerformanceScore(double avgTimeMs) {
-            // Score based on average execution time
-            if (avgTimeMs <= 50) return 1.0;    // Excellent
-            if (avgTimeMs <= 200) return 0.8;   // Good
-            if (avgTimeMs <= 500) return 0.6;   // Average
-            if (avgTimeMs <= 1000) return 0.4;  // Poor
-            return 0.2;  // Very poor
+            // Score based on average execution time - use functional pattern with threshold records
+            record TimeThreshold(double maxTime, double score) {}
+
+            return Stream.of(
+                new TimeThreshold(50, 1.0),     // Excellent
+                new TimeThreshold(200, 0.8),    // Good
+                new TimeThreshold(500, 0.6),    // Average
+                new TimeThreshold(1000, 0.4)    // Poor
+            )
+            .filter(threshold -> avgTimeMs <= threshold.maxTime())
+            .findFirst()
+            .map(TimeThreshold::score)
+            .orElse(0.2);  // Very poor
         }
         
         public void reset() {

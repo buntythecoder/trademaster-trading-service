@@ -1,7 +1,7 @@
 package com.trademaster.trading.service.impl;
 
 import com.trademaster.trading.client.BrokerAuthClient;
-import com.trademaster.trading.common.Result;
+import com.trademaster.common.functional.Result;
 import com.trademaster.trading.common.TradeError;
 import com.trademaster.trading.dto.OrderRequest;
 import com.trademaster.trading.dto.OrderResponse;
@@ -26,6 +26,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
+import io.micrometer.core.instrument.Timer;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -88,135 +89,84 @@ public class OrderServiceImpl implements OrderService {
     private static final String BROKER_AUTH_CB = "broker-auth-service";
     private static final String PORTFOLIO_SERVICE_CB = "portfolio-service";
     
+    /**
+     * Order processing context record
+     * Pattern 2: Context encapsulation
+     * Rule #9: Immutable record
+     */
+    private record OrderProcessingContext(
+        String correlationId,
+        Timer.Sample orderProcessingTimer,
+        Timer.Sample riskCheckTimer,
+        long startTime
+    ) {}
+
     @Override
     @Transactional
     public Result<OrderResponse, TradeError> placeOrder(OrderRequest orderRequest, Long userId) {
-        long startTime = System.currentTimeMillis();
-        String correlationId = generateCorrelationId();
-        
-        // Start metrics collection
-        var orderProcessingTimer = metricsService.startOrderProcessing();
-        var riskCheckTimer = metricsService.startRiskCheck();
-        
-        log.info("Processing order placement - correlationId: {}, userId: {}, symbol: {}, quantity: {}", 
-                correlationId, userId, orderRequest.symbol(), orderRequest.quantity());
-        
+        OrderProcessingContext context = initiateOrderProcessing(orderRequest, userId);
+
         try {
-            // Step 1: Validate order
             ValidationResult validation = validateOrderWithAllValidators(orderRequest, userId);
-            metricsService.recordRiskCheckTime(riskCheckTimer);
-            
-            // Functional validation pattern using Result type
-            Result<ValidationResult, TradeError> validationResult = Optional.of(validation)
+            metricsService.recordRiskCheckTime(context.riskCheckTimer());
+
+            return Optional.of(validation)
                 .filter(ValidationResult::isValid)
                 .map(Result::<ValidationResult, TradeError>success)
-                .orElseGet(() -> {
-                    metricsService.recordOrderProcessingTime(orderProcessingTimer);
-                    metricsService.recordOrderFailed("UNKNOWN", "VALIDATION_FAILED");
-                    return Result.failure(new TradeError.ValidationError.MissingRequiredField(
-                        "Order validation failed: " + String.join(", ", validation.getErrorMessages())));
-                });
-            
-            // Short-circuit on validation failure
-            if (validationResult.isFailure()) {
-                return validationResult.map(v -> null);
-            }
-            
-            // Step 2: Create and persist order entity
-            Order order = createOrderFromRequest(orderRequest, userId);
-            order = orderRepository.save(order);
-            
-            // Record order placed metric
-            String brokerName = orderRequest.brokerName() != null ? orderRequest.brokerName() : "UNKNOWN";
-            BigDecimal orderValue = orderRequest.getEstimatedOrderValue();
-            metricsService.recordOrderPlaced(brokerName, orderValue);
-            metricsService.incrementActiveOrders();
-            
-            // Step 3: Route order to best broker/venue using functional pattern
-            RoutingDecision routingDecision = orderRouter.routeOrder(order);
-            
-            // Functional routing decision pattern
-            Result<RoutingDecision, TradeError> routingResult = switch (routingDecision.getStrategy()) {
-                case REJECT -> {
-                    // Handle rejection functionally without lambda mutation
-                    order.updateStatus(OrderStatus.REJECTED);
-                    order.setRejectionReason(routingDecision.getReason());
-                    orderRepository.save(order);
-                    
-                    // Record metrics for rejected order
-                    metricsService.recordOrderProcessingTime(orderProcessingTimer);
-                    metricsService.recordOrderFailed(routingDecision.getBrokerName(), "ROUTING_REJECTED");
-                    metricsService.decrementActiveOrders();
-                    
-                    yield Result.failure(new TradeError.ExecutionError.OrderRejected(routingDecision.getReason()));
-                }
-                default -> Result.success(routingDecision);
-            };
-            
-            // Short-circuit on routing failure
-            if (routingResult.isFailure()) {
-                return routingResult.map(r -> null);
-            }
-            
-            // Step 4: Submit to broker via broker-auth-service
-            CompletableFuture<String> brokerSubmission = submitOrderToBroker(order, routingDecision, correlationId);
-            
-            // Step 5: Handle broker response
-            try {
-                String brokerOrderId = brokerSubmission.join();
-                order.setBrokerOrderId(brokerOrderId);
-                order.setBrokerName(routingDecision.getBrokerName());
-                order.updateStatus(OrderStatus.ACKNOWLEDGED);
-                order = orderRepository.save(order);
-                
-                // Step 6: Publish order placed event
-                eventPublisher.publishOrderPlacedEvent(order);
-                
-                // Record successful execution metrics
-                metricsService.recordOrderProcessingTime(orderProcessingTimer);
-                metricsService.recordOrderExecuted(routingDecision.getBrokerName(), orderRequest.getEstimatedOrderValue());
-                
-                long processingTime = System.currentTimeMillis() - startTime;
-                
-                // Check for SLA violations
-                if (processingTime > 100) { // 100ms SLA
-                    alertingService.handleSLAViolation("ORDER_PROCESSING", processingTime, 100);
-                }
-                
-                log.info("Order placed successfully - correlationId: {}, orderId: {}, brokerOrderId: {}, processingTime: {}ms", 
-                        correlationId, order.getOrderId(), brokerOrderId, processingTime);
-                
-                return Result.success(convertToOrderResponse(order));
-                
-            } catch (Exception brokerError) {
-                log.error("Broker submission failed - correlationId: {}, orderId: {}, error: {}", 
-                         correlationId, order.getOrderId(), brokerError.getMessage());
-                
-                order.updateStatus(OrderStatus.REJECTED);
-                order.setRejectionReason("Broker submission failed: " + brokerError.getMessage());
-                orderRepository.save(order);
-                
-                // Record failure metrics
-                metricsService.recordOrderProcessingTime(orderProcessingTimer);
-                metricsService.recordOrderFailed(routingDecision.getBrokerName(), "BROKER_SUBMISSION_FAILED");
-                metricsService.decrementActiveOrders();
-                
-                // Handle connectivity issue
-                alertingService.handleBrokerConnectivityIssue(routingDecision.getBrokerName(), brokerError.getMessage());
-                
-                return Result.failure(new TradeError.SystemError.ServiceUnavailable("broker-auth-service"));
-            }
-            
+                .orElseGet(() -> handleValidationFailure(context, validation))
+                .flatMap(validationResult -> processValidatedOrder(
+                    orderRequest, userId, context.orderProcessingTimer(), context.correlationId(), context.startTime()
+                ));
         } catch (Exception e) {
-            log.error("Failed to place order - correlationId: {}, userId: {}, error: {}", 
-                     correlationId, userId, e.getMessage());
-            
-            // Record unexpected error metrics
-            metricsService.recordOrderProcessingTime(orderProcessingTimer);
-            metricsService.recordOrderFailed("UNKNOWN", "UNEXPECTED_ERROR");
-            
-            return Result.failure(new TradeError.SystemError.UnexpectedError("Internal error: " + e.getMessage()));
+            return handleOrderProcessingException(context, orderRequest, userId, e);
         }
+    }
+
+    /**
+     * Initialize order processing with metrics and correlation ID
+     * Pattern 2: Initialization extraction
+     * Rule #5: 10 lines, complexity ≤7
+     */
+    private OrderProcessingContext initiateOrderProcessing(OrderRequest orderRequest, Long userId) {
+        String correlationId = generateCorrelationId();
+        Timer.Sample orderProcessingTimer = metricsService.startOrderProcessing();
+        Timer.Sample riskCheckTimer = metricsService.startRiskCheck();
+        long startTime = System.currentTimeMillis();
+
+        log.info("Processing order placement - correlationId: {}, userId: {}, symbol: {}, quantity: {}",
+                correlationId, userId, orderRequest.symbol(), orderRequest.quantity());
+
+        return new OrderProcessingContext(correlationId, orderProcessingTimer, riskCheckTimer, startTime);
+    }
+
+    /**
+     * Handle validation failure with metrics and error reporting
+     * Pattern 2: Error path extraction
+     * Rule #5: 8 lines, complexity ≤7
+     */
+    private Result<ValidationResult, TradeError> handleValidationFailure(
+            OrderProcessingContext context, ValidationResult validation) {
+        metricsService.recordOrderProcessingTime(context.orderProcessingTimer());
+        metricsService.recordOrderFailed("UNKNOWN", "VALIDATION_FAILED");
+
+        return Result.failure(new TradeError.ValidationError.MissingRequiredField(
+            "Order validation failed: " + String.join(", ", validation.getErrorMessages())));
+    }
+
+    /**
+     * Handle unexpected order processing exception
+     * Pattern 2: Exception handling extraction
+     * Rule #5: 10 lines, complexity ≤7
+     */
+    private Result<OrderResponse, TradeError> handleOrderProcessingException(
+            OrderProcessingContext context, OrderRequest orderRequest, Long userId, Exception e) {
+        log.error("Failed to place order - correlationId: {}, userId: {}, error: {}",
+                 context.correlationId(), userId, e.getMessage());
+
+        metricsService.recordOrderProcessingTime(context.orderProcessingTimer());
+        metricsService.recordOrderFailed("UNKNOWN", "UNEXPECTED_ERROR");
+
+        return Result.failure(new TradeError.SystemError.UnexpectedError("Internal error: " + e.getMessage()));
     }
     
     @Override
@@ -322,52 +272,77 @@ public class OrderServiceImpl implements OrderService {
     @Transactional
     public Result<OrderResponse, TradeError> modifyOrder(String orderId, OrderRequest modificationRequest, Long userId) {
         String correlationId = generateCorrelationId();
-        
+
         try {
-            Optional<Order> orderOpt = orderRepository.findByOrderIdAndUserId(orderId, userId);
-            if (orderOpt.isEmpty()) {
-                return Result.failure(new TradeError.DataError.EntityNotFound("Order", orderId));
-            }
-            
-            Order order = orderOpt.get();
-            if (!order.getStatus().isModifiable()) {
-                return Result.failure(new TradeError.ExecutionError.OrderRejected(
-                    "Order cannot be modified in status: " + order.getStatus()));
-            }
-            
-            // Validate modification request
-            ValidationResult validation = validateOrderWithAllValidators(modificationRequest, userId);
-            if (!validation.isValid()) {
-                return Result.failure(new TradeError.ValidationError.MissingRequiredField(
-                    "Modification validation failed: " + String.join(", ", validation.getErrorMessages())));
-            }
-            
-            // Submit modification to broker
-            CompletableFuture<String> brokerModification = modifyOrderWithBroker(order, modificationRequest, correlationId);
-            
-            try {
-                String newBrokerOrderId = brokerModification.join();
-                
-                // Update order with new details
-                updateOrderFromModificationRequest(order, modificationRequest);
-                if (newBrokerOrderId != null && !newBrokerOrderId.equals(order.getBrokerOrderId())) {
-                    order.setBrokerOrderId(newBrokerOrderId);
-                }
-                order = orderRepository.save(order);
-                
-                log.info("Order modified successfully - correlationId: {}, orderId: {}", correlationId, orderId);
-                return Result.success(convertToOrderResponse(order));
-                
-            } catch (Exception brokerError) {
-                log.error("Broker modification failed - correlationId: {}, orderId: {}, error: {}", 
-                         correlationId, orderId, brokerError.getMessage());
-                return Result.failure(new TradeError.SystemError.ServiceUnavailable("broker-auth-service"));
-            }
-            
+            // Functional pattern: chain Optional operations to eliminate if-statements
+            return orderRepository.findByOrderIdAndUserId(orderId, userId)
+                .map(Result::<Order, TradeError>success)
+                .orElse(Result.failure(new TradeError.DataError.EntityNotFound("Order", orderId)))
+                .flatMap(order -> validateModifiableStatus(order))
+                .flatMap(order -> validateModificationRequest(order, modificationRequest, userId))
+                .flatMap(order -> executeOrderModification(order, modificationRequest, correlationId, orderId));
+
         } catch (Exception e) {
-            log.error("Failed to modify order - correlationId: {}, orderId: {}, error: {}", 
+            log.error("Failed to modify order - correlationId: {}, orderId: {}, error: {}",
                      correlationId, orderId, e.getMessage());
             return Result.failure(new TradeError.SystemError.UnexpectedError("Internal error: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * Validate order status is modifiable - eliminates if-statement
+     */
+    private Result<Order, TradeError> validateModifiableStatus(Order order) {
+        return Optional.of(order)
+            .filter(o -> o.getStatus().isModifiable())
+            .map(Result::<Order, TradeError>success)
+            .orElse(Result.failure(new TradeError.ExecutionError.OrderRejected(
+                "Order cannot be modified in status: " + order.getStatus())));
+    }
+
+    /**
+     * Validate modification request - eliminates if-statement
+     */
+    private Result<Order, TradeError> validateModificationRequest(
+            Order order, OrderRequest modificationRequest, Long userId) {
+        ValidationResult validation = validateOrderWithAllValidators(modificationRequest, userId);
+
+        return Optional.of(validation)
+            .filter(ValidationResult::isValid)
+            .map(v -> Result.<Order, TradeError>success(order))
+            .orElse(Result.failure(new TradeError.ValidationError.MissingRequiredField(
+                "Modification validation failed: " + String.join(", ", validation.getErrorMessages()))));
+    }
+
+    /**
+     * Execute order modification with broker - eliminates if-statements
+     */
+    private Result<OrderResponse, TradeError> executeOrderModification(
+            Order order, OrderRequest modificationRequest, String correlationId, String orderId) {
+
+        CompletableFuture<String> brokerModification = modifyOrderWithBroker(order, modificationRequest, correlationId);
+
+        try {
+            String newBrokerOrderId = brokerModification.join();
+
+            // Update order with new details
+            updateOrderFromModificationRequest(order, modificationRequest);
+
+            // Update broker order ID if changed - eliminates if-statement with Optional
+            Order finalOrder = order;  // Create final copy for lambda
+            Optional.ofNullable(newBrokerOrderId)
+                .filter(newId -> !newId.equals(finalOrder.getBrokerOrderId()))
+                .ifPresent(finalOrder::setBrokerOrderId);
+
+            order = orderRepository.save(order);
+
+            log.info("Order modified successfully - correlationId: {}, orderId: {}", correlationId, orderId);
+            return Result.success(convertToOrderResponse(order));
+
+        } catch (Exception brokerError) {
+            log.error("Broker modification failed - correlationId: {}, orderId: {}, error: {}",
+                     correlationId, orderId, brokerError.getMessage());
+            return Result.failure(new TradeError.SystemError.ServiceUnavailable("broker-auth-service"));
         }
     }
     
@@ -375,46 +350,60 @@ public class OrderServiceImpl implements OrderService {
     @Transactional
     public Result<OrderResponse, TradeError> cancelOrder(String orderId, Long userId) {
         String correlationId = generateCorrelationId();
-        
+
         try {
-            Optional<Order> orderOpt = orderRepository.findByOrderIdAndUserId(orderId, userId);
-            if (orderOpt.isEmpty()) {
-                return Result.failure(new TradeError.DataError.EntityNotFound("Order", orderId));
-            }
-            
-            Order order = orderOpt.get();
-            if (!order.getStatus().isCancellable()) {
-                return Result.failure(new TradeError.ExecutionError.OrderRejected(
-                    "Order cannot be cancelled in status: " + order.getStatus()));
-            }
-            
-            // Submit cancellation to broker
-            if (order.getBrokerOrderId() != null) {
-                CompletableFuture<Void> brokerCancellation = cancelOrderWithBroker(order, correlationId);
-                
-                try {
-                    brokerCancellation.join();
-                } catch (Exception brokerError) {
-                    log.warn("Broker cancellation failed but proceeding with local cancellation - correlationId: {}, orderId: {}, error: {}", 
-                            correlationId, orderId, brokerError.getMessage());
-                }
-            }
-            
-            // Update order status
-            order.updateStatus(OrderStatus.CANCELLED);
-            order = orderRepository.save(order);
-            
-            // Publish cancellation event
-            eventPublisher.publishOrderCancelledEvent(order);
-            
-            log.info("Order cancelled successfully - correlationId: {}, orderId: {}", correlationId, orderId);
-            return Result.success(convertToOrderResponse(order));
-            
+            // Functional pattern: chain Optional operations to eliminate if-statements
+            return orderRepository.findByOrderIdAndUserId(orderId, userId)
+                .map(Result::<Order, TradeError>success)
+                .orElse(Result.failure(new TradeError.DataError.EntityNotFound("Order", orderId)))
+                .flatMap(order -> validateCancellableStatus(order))
+                .map(order -> executeCancellation(order, correlationId, orderId));
+
         } catch (Exception e) {
-            log.error("Failed to cancel order - correlationId: {}, orderId: {}, error: {}", 
+            log.error("Failed to cancel order - correlationId: {}, orderId: {}, error: {}",
                      correlationId, orderId, e.getMessage());
             return Result.failure(new TradeError.SystemError.UnexpectedError("Internal error: " + e.getMessage()));
         }
+    }
+
+    /**
+     * Validate order status is cancellable - eliminates if-statement
+     */
+    private Result<Order, TradeError> validateCancellableStatus(Order order) {
+        return Optional.of(order)
+            .filter(o -> o.getStatus().isCancellable())
+            .map(Result::<Order, TradeError>success)
+            .orElse(Result.failure(new TradeError.ExecutionError.OrderRejected(
+                "Order cannot be cancelled in status: " + order.getStatus())));
+    }
+
+    /**
+     * Execute order cancellation - eliminates if-statement with Optional
+     */
+    private OrderResponse executeCancellation(Order order, String correlationId, String orderId) {
+        // Submit cancellation to broker if broker order ID exists - eliminates if-statement with Optional
+        Order finalOrder = order;  // Create final copy for lambda
+        Optional.ofNullable(finalOrder.getBrokerOrderId())
+            .ifPresent(brokerOrderId -> {
+                CompletableFuture<Void> brokerCancellation = cancelOrderWithBroker(finalOrder, correlationId);
+
+                try {
+                    brokerCancellation.join();
+                } catch (Exception brokerError) {
+                    log.warn("Broker cancellation failed but proceeding with local cancellation - correlationId: {}, orderId: {}, error: {}",
+                            correlationId, orderId, brokerError.getMessage());
+                }
+            });
+
+        // Update order status
+        order.updateStatus(OrderStatus.CANCELLED);
+        order = orderRepository.save(order);
+
+        // Publish cancellation event
+        eventPublisher.publishOrderCancelledEvent(order);
+
+        log.info("Order cancelled successfully - correlationId: {}, orderId: {}", correlationId, orderId);
+        return convertToOrderResponse(order);
     }
     
     @Override
@@ -467,16 +456,19 @@ public class OrderServiceImpl implements OrderService {
     @Override
     @Transactional
     public Order updateOrderStatus(String orderId, OrderStatus newStatus, String reason) {
-        Optional<Order> orderOpt = orderRepository.findByOrderId(orderId);
-        if (orderOpt.isPresent()) {
-            Order order = orderOpt.get();
-            order.updateStatus(newStatus);
-            if (reason != null && newStatus == OrderStatus.REJECTED) {
-                order.setRejectionReason(reason);
-            }
-            return orderRepository.save(order);
-        }
-        throw new IllegalArgumentException("Order not found: " + orderId);
+        // Functional pattern: eliminate if-statements with Optional and pattern matching
+        return orderRepository.findByOrderId(orderId)
+            .map(order -> {
+                order.updateStatus(newStatus);
+
+                // Set rejection reason using pattern matching - eliminates if-statement
+                Optional.ofNullable(reason)
+                    .filter(r -> newStatus == OrderStatus.REJECTED)
+                    .ifPresent(order::setRejectionReason);
+
+                return orderRepository.save(order);
+            })
+            .orElseThrow(() -> new IllegalArgumentException("Order not found: " + orderId));
     }
     
     @Override
@@ -509,7 +501,183 @@ public class OrderServiceImpl implements OrderService {
     }
     
     // Private helper methods
-    
+
+    /**
+     * Process validated order through routing and broker submission
+     * Pattern 2: Layered Extraction - orchestration layer
+     * Rule #5: 14 lines, complexity ≤7
+     */
+    private Result<OrderResponse, TradeError> processValidatedOrder(
+            OrderRequest orderRequest,
+            Long userId,
+            Timer.Sample orderProcessingTimer,
+            String correlationId,
+            long startTime) {
+
+        Order order = createAndPersistOrderWithMetrics(orderRequest, userId);
+        RoutingDecision routingDecision = orderRouter.routeOrder(order);
+
+        Result<RoutingDecision, TradeError> routingResult = switch (routingDecision.getStrategy()) {
+            case REJECT -> handleRoutingRejection(order, routingDecision, orderProcessingTimer);
+            default -> Result.<RoutingDecision, TradeError>success(routingDecision);
+        };
+
+        return routingResult.flatMap(routing -> submitAndProcessBrokerResponse(
+            order, routing, orderRequest, orderProcessingTimer, correlationId, startTime
+        ));
+    }
+
+    /**
+     * Create and persist order with metrics recording
+     * Pattern 2: Order creation extraction
+     * Rule #5: 11 lines, complexity ≤7
+     */
+    private Order createAndPersistOrderWithMetrics(OrderRequest orderRequest, Long userId) {
+        Order order = createOrderFromRequest(orderRequest, userId);
+        order = orderRepository.save(order);
+
+        String brokerName = Optional.ofNullable(orderRequest.brokerName()).orElse("UNKNOWN");
+        BigDecimal orderValue = orderRequest.getEstimatedOrderValue();
+        metricsService.recordOrderPlaced(brokerName, orderValue);
+        metricsService.incrementActiveOrders();
+
+        return order;
+    }
+
+    /**
+     * Handle routing rejection with metrics and status update
+     * Pattern 2: Rejection path extraction
+     * Rule #5: 12 lines, complexity ≤7
+     */
+    private Result<RoutingDecision, TradeError> handleRoutingRejection(
+            Order order,
+            RoutingDecision routingDecision,
+            Timer.Sample orderProcessingTimer) {
+
+        order.updateStatus(OrderStatus.REJECTED);
+        order.setRejectionReason(routingDecision.getReason());
+        orderRepository.save(order);
+
+        metricsService.recordOrderProcessingTime(orderProcessingTimer);
+        metricsService.recordOrderFailed(routingDecision.getBrokerName(), "ROUTING_REJECTED");
+        metricsService.decrementActiveOrders();
+
+        return Result.<RoutingDecision, TradeError>failure(new TradeError.ExecutionError.OrderRejected(routingDecision.getReason()));
+    }
+
+    /**
+     * Submit order to broker and process response
+     * Pattern 2: Layered Extraction - orchestration layer
+     * Rule #5: 15 lines, complexity ≤7
+     */
+    private Result<OrderResponse, TradeError> submitAndProcessBrokerResponse(
+            Order order,
+            RoutingDecision routingDecision,
+            OrderRequest orderRequest,
+            Timer.Sample orderProcessingTimer,
+            String correlationId,
+            long startTime) {
+
+        CompletableFuture<String> brokerSubmission = submitOrderToBroker(order, routingDecision, correlationId);
+
+        try {
+            return handleBrokerSuccess(order, routingDecision, orderRequest, orderProcessingTimer,
+                                      correlationId, startTime, brokerSubmission.join());
+        } catch (Exception brokerError) {
+            return handleBrokerFailure(order, routingDecision, orderProcessingTimer,
+                                      correlationId, brokerError);
+        }
+    }
+
+    /**
+     * Handle successful broker submission
+     * Pattern 2: Success path extraction
+     * Rule #5: 15 lines, complexity ≤7
+     */
+    private Result<OrderResponse, TradeError> handleBrokerSuccess(
+            Order order,
+            RoutingDecision routingDecision,
+            OrderRequest orderRequest,
+            Timer.Sample orderProcessingTimer,
+            String correlationId,
+            long startTime,
+            String brokerOrderId) {
+
+        order.setBrokerOrderId(brokerOrderId);
+        order.setBrokerName(routingDecision.getBrokerName());
+        order.updateStatus(OrderStatus.ACKNOWLEDGED);
+        order = orderRepository.save(order);
+
+        eventPublisher.publishOrderPlacedEvent(order);
+        recordSuccessMetrics(orderProcessingTimer, routingDecision, orderRequest);
+        checkSLAViolation(startTime, correlationId, order.getOrderId(), brokerOrderId);
+
+        return Result.success(convertToOrderResponse(order));
+    }
+
+    /**
+     * Handle broker submission failure
+     * Pattern 2: Error path extraction
+     * Rule #5: 12 lines, complexity ≤7
+     */
+    private Result<OrderResponse, TradeError> handleBrokerFailure(
+            Order order,
+            RoutingDecision routingDecision,
+            Timer.Sample orderProcessingTimer,
+            String correlationId,
+            Exception brokerError) {
+
+        log.error("Broker submission failed - correlationId: {}, orderId: {}, error: {}",
+                 correlationId, order.getOrderId(), brokerError.getMessage());
+
+        order.updateStatus(OrderStatus.REJECTED);
+        order.setRejectionReason("Broker submission failed: " + brokerError.getMessage());
+        orderRepository.save(order);
+
+        recordFailureMetrics(orderProcessingTimer, routingDecision);
+        alertingService.handleBrokerConnectivityIssue(routingDecision.getBrokerName(), brokerError.getMessage());
+
+        return Result.failure(new TradeError.SystemError.ServiceUnavailable("broker-auth-service"));
+    }
+
+    /**
+     * Record successful execution metrics
+     * Pattern 2: Metrics extraction
+     * Rule #5: 5 lines, complexity ≤7
+     */
+    private void recordSuccessMetrics(Timer.Sample orderProcessingTimer, RoutingDecision routingDecision,
+                                     OrderRequest orderRequest) {
+        metricsService.recordOrderProcessingTime(orderProcessingTimer);
+        metricsService.recordOrderExecuted(routingDecision.getBrokerName(), orderRequest.getEstimatedOrderValue());
+    }
+
+    /**
+     * Record failure metrics
+     * Pattern 2: Metrics extraction
+     * Rule #5: 5 lines, complexity ≤7
+     */
+    private void recordFailureMetrics(Timer.Sample orderProcessingTimer, RoutingDecision routingDecision) {
+        metricsService.recordOrderProcessingTime(orderProcessingTimer);
+        metricsService.recordOrderFailed(routingDecision.getBrokerName(), "BROKER_SUBMISSION_FAILED");
+        metricsService.decrementActiveOrders();
+    }
+
+    /**
+     * Check for SLA violations using functional pattern
+     * Pattern 2: SLA monitoring extraction
+     * Rule #5: 7 lines, complexity ≤7
+     */
+    private void checkSLAViolation(long startTime, String correlationId, String orderId, String brokerOrderId) {
+        long processingTime = System.currentTimeMillis() - startTime;
+
+        Optional.of(processingTime)
+            .filter(time -> time > 100) // 100ms SLA
+            .ifPresent(time -> alertingService.handleSLAViolation("ORDER_PROCESSING", time, 100));
+
+        log.info("Order placed successfully - correlationId: {}, orderId: {}, brokerOrderId: {}, processingTime: {}ms",
+                correlationId, orderId, brokerOrderId, processingTime);
+    }
+
     private ValidationResult validateOrderWithAllValidators(OrderRequest orderRequest, Long userId) {
         // Functional programming pattern - replace for loop with stream operations
         return validators.stream()
@@ -564,28 +732,29 @@ public class OrderServiceImpl implements OrderService {
     private CompletableFuture<String> submitOrderToBroker(Order order, RoutingDecision routingDecision, String correlationId) {
         return CompletableFuture.supplyAsync(() -> {
             try {
+                // Eliminates ternaries using Optional.ofNullable() for null-safe toString conversion
                 Map<String, Object> orderData = Map.of(
                     "symbol", order.getSymbol(),
                     "exchange", order.getExchange(),
                     "side", order.getSide().name(),
                     "orderType", order.getOrderType().name(),
                     "quantity", order.getQuantity(),
-                    "limitPrice", order.getLimitPrice() != null ? order.getLimitPrice().toString() : "",
-                    "stopPrice", order.getStopPrice() != null ? order.getStopPrice().toString() : "",
+                    "limitPrice", Optional.ofNullable(order.getLimitPrice()).map(BigDecimal::toString).orElse(""),
+                    "stopPrice", Optional.ofNullable(order.getStopPrice()).map(BigDecimal::toString).orElse(""),
                     "timeInForce", order.getTimeInForce().name()
                 );
                 
                 Map<String, Object> response = brokerAuthClient.submitOrder(
-                    routingDecision.getBrokerName(), 
-                    orderData, 
+                    routingDecision.getBrokerName(),
+                    orderData,
                     correlationId
                 );
-                
-                if (response.get("success").equals(true)) {
-                    return (String) response.get("brokerOrderId");
-                } else {
-                    throw new RuntimeException("Broker rejected order: " + response.get("message"));
-                }
+
+                // Functional pattern: pattern matching for broker response - eliminates if-statement
+                return Optional.ofNullable(response.get("success"))
+                    .filter(success -> Boolean.TRUE.equals(success))
+                    .map(success -> (String) response.get("brokerOrderId"))
+                    .orElseThrow(() -> new RuntimeException("Broker rejected order: " + response.get("message")));
                 
             } catch (Exception e) {
                 log.error("Failed to submit order to broker - correlationId: {}, orderId: {}, error: {}", 
@@ -599,10 +768,11 @@ public class OrderServiceImpl implements OrderService {
     private CompletableFuture<String> modifyOrderWithBroker(Order order, OrderRequest modificationRequest, String correlationId) {
         return CompletableFuture.supplyAsync(() -> {
             try {
+                // Eliminates ternaries using Optional.ofNullable() for null-safe toString conversion
                 Map<String, Object> modificationData = Map.of(
                     "quantity", modificationRequest.quantity(),
-                    "limitPrice", modificationRequest.limitPrice() != null ? modificationRequest.limitPrice().toString() : "",
-                    "stopPrice", modificationRequest.stopPrice() != null ? modificationRequest.stopPrice().toString() : ""
+                    "limitPrice", Optional.ofNullable(modificationRequest.limitPrice()).map(BigDecimal::toString).orElse(""),
+                    "stopPrice", Optional.ofNullable(modificationRequest.stopPrice()).map(BigDecimal::toString).orElse("")
                 );
                 
                 Map<String, Object> response = brokerAuthClient.modifyOrder(
@@ -611,12 +781,12 @@ public class OrderServiceImpl implements OrderService {
                     modificationData,
                     correlationId
                 );
-                
-                if (response.get("success").equals(true)) {
-                    return (String) response.get("brokerOrderId");
-                } else {
-                    throw new RuntimeException("Broker rejected modification: " + response.get("message"));
-                }
+
+                // Functional pattern: pattern matching for broker response - eliminates if-statement
+                return Optional.ofNullable(response.get("success"))
+                    .filter(success -> Boolean.TRUE.equals(success))
+                    .map(success -> (String) response.get("brokerOrderId"))
+                    .orElseThrow(() -> new RuntimeException("Broker rejected modification: " + response.get("message")));
                 
             } catch (Exception e) {
                 log.error("Failed to modify order with broker - correlationId: {}, orderId: {}, error: {}", 
@@ -644,16 +814,19 @@ public class OrderServiceImpl implements OrderService {
         }, orderProcessingExecutor);
     }
     
+    /**
+     * Update order from modification request - eliminates if-statements with Optional
+     */
     private void updateOrderFromModificationRequest(Order order, OrderRequest modificationRequest) {
-        if (modificationRequest.quantity() != null) {
-            order.setQuantity(modificationRequest.quantity());
-        }
-        if (modificationRequest.limitPrice() != null) {
-            order.setLimitPrice(modificationRequest.limitPrice());
-        }
-        if (modificationRequest.stopPrice() != null) {
-            order.setStopPrice(modificationRequest.stopPrice());
-        }
+        // Functional pattern: use Optional to conditionally update fields - eliminates if-statements
+        Optional.ofNullable(modificationRequest.quantity())
+            .ifPresent(order::setQuantity);
+
+        Optional.ofNullable(modificationRequest.limitPrice())
+            .ifPresent(order::setLimitPrice);
+
+        Optional.ofNullable(modificationRequest.stopPrice())
+            .ifPresent(order::setStopPrice);
     }
     
     private String generateCorrelationId() {

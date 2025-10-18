@@ -22,6 +22,8 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Arrays;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
 /**
@@ -81,7 +83,7 @@ public class LoggingAggregationConfig {
     }
     
     /**
-     * Create required log directories with proper permissions
+     * Create required log directories with proper permissions - eliminates for loop and if-statement with Stream
      */
     private void setupLogDirectories() throws Exception {
         String[] directories = {
@@ -92,14 +94,18 @@ public class LoggingAggregationConfig {
             loggingProperties.getSecurityLogPath(),
             loggingProperties.getArchivePath()
         };
-        
-        for (String dirPath : directories) {
-            Path path = Paths.get(dirPath);
-            if (!Files.exists(path)) {
-                Files.createDirectories(path);
-                log.info("Created log directory: {}", path.toAbsolutePath());
-            }
-        }
+
+        Arrays.stream(directories)
+            .map(Paths::get)
+            .filter(path -> !Files.exists(path))
+            .forEach(path -> {
+                try {
+                    Files.createDirectories(path);
+                    log.info("Created log directory: {}", path.toAbsolutePath());
+                } catch (Exception e) {
+                    throw new RuntimeException("Failed to create directory: " + path, e);
+                }
+            });
     }
     
     /**
@@ -316,38 +322,45 @@ public class LoggingAggregationConfig {
     }
     
     /**
-     * Clean up log directory based on retention policy
+     * Clean up log directory based on retention policy - eliminates if-statement with Optional
      */
     private long cleanupLogDirectory(String directoryPath, int retentionDays) {
         try {
             Path logDir = Paths.get(directoryPath);
-            if (!Files.exists(logDir)) {
-                return 0;
-            }
-            
-            long cutoffTime = System.currentTimeMillis() - (retentionDays * 24L * 60 * 60 * 1000);
-            
-            return Files.walk(logDir)
-                .filter(Files::isRegularFile)
-                .filter(path -> {
+
+            return Optional.of(logDir)
+                .filter(Files::exists)
+                .map(dir -> {
                     try {
-                        return Files.getLastModifiedTime(path).toMillis() < cutoffTime;
+                        long cutoffTime = System.currentTimeMillis() - (retentionDays * 24L * 60 * 60 * 1000);
+
+                        return Files.walk(dir)
+                            .filter(Files::isRegularFile)
+                            .filter(path -> {
+                                try {
+                                    return Files.getLastModifiedTime(path).toMillis() < cutoffTime;
+                                } catch (Exception e) {
+                                    log.warn("Failed to check modification time for: {}", path, e);
+                                    return false;
+                                }
+                            })
+                            .mapToLong(path -> {
+                                try {
+                                    Files.delete(path);
+                                    return 1;
+                                } catch (Exception e) {
+                                    log.warn("Failed to delete log file: {}", path, e);
+                                    return 0;
+                                }
+                            })
+                            .sum();
                     } catch (Exception e) {
-                        log.warn("Failed to check modification time for: {}", path, e);
-                        return false;
+                        log.error("Failed to walk directory: {}", dir, e);
+                        return 0L;
                     }
                 })
-                .mapToLong(path -> {
-                    try {
-                        Files.delete(path);
-                        return 1;
-                    } catch (Exception e) {
-                        log.warn("Failed to delete log file: {}", path, e);
-                        return 0;
-                    }
-                })
-                .sum();
-                
+                .orElse(0L);
+
         } catch (Exception e) {
             log.error("Failed to cleanup log directory: {}", directoryPath, e);
             return 0;
@@ -355,58 +368,87 @@ public class LoggingAggregationConfig {
     }
     
     /**
-     * Archive important logs before deletion for compliance
+     * Archive important logs before deletion for compliance - eliminates if-statement with Optional
      */
     private void archiveImportantLogs() {
         try {
             String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
             Path archiveDir = Paths.get(loggingProperties.getArchivePath(), timestamp);
-            
-            if (!Files.exists(archiveDir)) {
-                Files.createDirectories(archiveDir);
-            }
-            
+
+            // Create archive directory if it doesn't exist - functional style
+            Optional.of(archiveDir)
+                .filter(dir -> !Files.exists(dir))
+                .ifPresent(dir -> {
+                    try {
+                        Files.createDirectories(dir);
+                    } catch (Exception e) {
+                        throw new RuntimeException("Failed to create archive directory: " + dir, e);
+                    }
+                });
+
             // Archive audit logs (required for compliance)
             archiveLogFiles(loggingProperties.getAuditLogPath(), archiveDir.resolve("audit"));
-            
+
             // Archive security logs (required for compliance)
             archiveLogFiles(loggingProperties.getSecurityLogPath(), archiveDir.resolve("security"));
-            
+
             log.info("Important logs archived to: {}", archiveDir);
-            
+
         } catch (Exception e) {
             log.error("Failed to archive important logs", e);
         }
     }
     
     /**
-     * Archive log files from source to destination
+     * Archive log files from source to destination - eliminates if-statements with Optional
      */
     private void archiveLogFiles(String sourcePath, Path destinationPath) {
         try {
             Path sourceDir = Paths.get(sourcePath);
-            if (!Files.exists(sourceDir)) {
-                return;
-            }
-            
-            if (!Files.exists(destinationPath)) {
-                Files.createDirectories(destinationPath);
-            }
-            
-            Files.walk(sourceDir)
-                .filter(Files::isRegularFile)
-                .filter(path -> path.toString().endsWith(".log.gz"))
-                .forEach(path -> {
+
+            // Process only if source directory exists - functional early return pattern
+            Optional.of(sourceDir)
+                .filter(Files::exists)
+                .ifPresent(dir -> {
                     try {
-                        Path targetPath = destinationPath.resolve(path.getFileName());
-                        if (!Files.exists(targetPath)) {
-                            Files.copy(path, targetPath);
-                        }
+                        // Create destination directory if needed - functional style
+                        Optional.of(destinationPath)
+                            .filter(dest -> !Files.exists(dest))
+                            .ifPresent(dest -> {
+                                try {
+                                    Files.createDirectories(dest);
+                                } catch (Exception e) {
+                                    throw new RuntimeException("Failed to create destination: " + dest, e);
+                                }
+                            });
+
+                        // Walk and archive log files
+                        Files.walk(dir)
+                            .filter(Files::isRegularFile)
+                            .filter(path -> path.toString().endsWith(".log.gz"))
+                            .forEach(path -> {
+                                try {
+                                    Path targetPath = destinationPath.resolve(path.getFileName());
+
+                                    // Copy only if target doesn't exist - functional style
+                                    Optional.of(targetPath)
+                                        .filter(target -> !Files.exists(target))
+                                        .ifPresent(target -> {
+                                            try {
+                                                Files.copy(path, target);
+                                            } catch (Exception e) {
+                                                throw new RuntimeException("Failed to copy: " + path, e);
+                                            }
+                                        });
+                                } catch (Exception e) {
+                                    log.warn("Failed to archive log file: {}", path, e);
+                                }
+                            });
                     } catch (Exception e) {
-                        log.warn("Failed to archive log file: {}", path, e);
+                        throw new RuntimeException("Failed to walk directory: " + dir, e);
                     }
                 });
-                
+
         } catch (Exception e) {
             log.error("Failed to archive log files from: {}", sourcePath, e);
         }
@@ -507,26 +549,26 @@ public class LoggingAggregationConfig {
         @Override
         public org.springframework.boot.actuate.health.Health health() {
             try {
-                // Check if log directories exist and are writable
+                // Check if log directories exist and are writable - eliminates if-else with functional pattern
                 boolean allDirectoriesHealthy = checkDirectoryHealth(properties.getAuditLogPath()) &&
                                               checkDirectoryHealth(properties.getPerformanceLogPath()) &&
                                               checkDirectoryHealth(properties.getErrorLogPath()) &&
                                               checkDirectoryHealth(properties.getApplicationLogPath()) &&
                                               checkDirectoryHealth(properties.getSecurityLogPath());
-                
-                if (allDirectoriesHealthy) {
-                    return org.springframework.boot.actuate.health.Health.up()
+
+                // Functional pattern: use Optional to map boolean to health status
+                return Optional.of(allDirectoriesHealthy)
+                    .filter(healthy -> healthy)
+                    .map(healthy -> org.springframework.boot.actuate.health.Health.up()
                         .withDetail("structuredLogging", properties.isEnableStructuredLogging())
                         .withDetail("logAggregation", properties.isEnableLogAggregation())
                         .withDetail("auditRetentionDays", properties.getAuditRetentionDays())
                         .withDetail("status", "All log directories healthy")
-                        .build();
-                } else {
-                    return org.springframework.boot.actuate.health.Health.down()
+                        .build())
+                    .orElseGet(() -> org.springframework.boot.actuate.health.Health.down()
                         .withDetail("issue", "One or more log directories are not accessible")
-                        .build();
-                }
-                
+                        .build());
+
             } catch (Exception e) {
                 return org.springframework.boot.actuate.health.Health.down()
                     .withDetail("error", e.getMessage())

@@ -11,6 +11,7 @@ import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
 /**
@@ -132,47 +133,53 @@ public class StructuredLoggingService {
     
     /**
      * Log security event
+     * Uses Optional to eliminate ternary operators
      */
-    public void logSecurityEvent(String correlationId, Long userId, String securityEvent, 
+    public void logSecurityEvent(String correlationId, Long userId, String securityEvent,
                                String sourceIp, String userAgent, String message) {
         withMDC(Map.of(
             CORRELATION_ID, correlationId,
-            USER_ID, userId != null ? String.valueOf(userId) : "anonymous",
+            USER_ID, Optional.ofNullable(userId).map(String::valueOf).orElse("anonymous"),
             SECURITY_EVENT, securityEvent,
-            SOURCE_IP, sourceIp != null ? sourceIp : "unknown",
-            USER_AGENT, userAgent != null ? userAgent : "unknown"
+            SOURCE_IP, Optional.ofNullable(sourceIp).orElse("unknown"),
+            USER_AGENT, Optional.ofNullable(userAgent).orElse("unknown")
         ), () -> SECURITY_LOGGER.warn(message));
     }
     
     /**
      * Log authentication event
+     * Uses Optional to eliminate if-statement and ternary operators
      */
-    public void logAuthenticationEvent(String correlationId, Long userId, String authEvent, 
+    public void logAuthenticationEvent(String correlationId, Long userId, String authEvent,
                                      String sourceIp, boolean success, String message) {
-        String securityEvent = success ? "AUTH_SUCCESS" : "AUTH_FAILURE";
+        String securityEvent = Optional.of(success)
+            .filter(s -> s)
+            .map(s -> "AUTH_SUCCESS")
+            .orElse("AUTH_FAILURE");
         withMDC(Map.of(
             CORRELATION_ID, correlationId,
-            USER_ID, userId != null ? String.valueOf(userId) : "unknown",
+            USER_ID, Optional.ofNullable(userId).map(String::valueOf).orElse("unknown"),
             SECURITY_EVENT, securityEvent,
-            SOURCE_IP, sourceIp != null ? sourceIp : "unknown",
+            SOURCE_IP, Optional.ofNullable(sourceIp).orElse("unknown"),
             OPERATION, authEvent
-        ), () -> {
-            if (success) {
-                SECURITY_LOGGER.info(message);
-            } else {
-                SECURITY_LOGGER.warn(message);
-            }
-        });
+        ), () -> Optional.of(success)
+            .filter(s -> s)
+            .ifPresentOrElse(
+                s -> SECURITY_LOGGER.info(message),
+                () -> SECURITY_LOGGER.warn(message)
+            )
+        );
     }
     
     /**
      * Log error with full context
+     * Uses Optional to eliminate ternary operator
      */
-    public void logError(String correlationId, Long userId, String errorCode, 
+    public void logError(String correlationId, Long userId, String errorCode,
                         String operation, String message, Throwable throwable) {
         withMDC(Map.of(
             CORRELATION_ID, correlationId,
-            USER_ID, userId != null ? String.valueOf(userId) : "system",
+            USER_ID, Optional.ofNullable(userId).map(String::valueOf).orElse("system"),
             ERROR_CODE, errorCode,
             OPERATION, operation
         ), () -> ERROR_LOGGER.error(message, throwable));
@@ -227,6 +234,7 @@ public class StructuredLoggingService {
     
     /**
      * Execute operation with correlation context
+     * Uses Optional to eliminate if-statement
      */
     public CompletableFuture<Void> executeWithCorrelation(String correlationId, Runnable operation) {
         return CompletableFuture.runAsync(() -> {
@@ -235,11 +243,11 @@ public class StructuredLoggingService {
                 MDC.put(CORRELATION_ID, correlationId);
                 operation.run();
             } finally {
-                if (previousCorrelationId != null) {
-                    MDC.put(CORRELATION_ID, previousCorrelationId);
-                } else {
-                    MDC.remove(CORRELATION_ID);
-                }
+                Optional.ofNullable(previousCorrelationId)
+                    .ifPresentOrElse(
+                        prevId -> MDC.put(CORRELATION_ID, prevId),
+                        () -> MDC.remove(CORRELATION_ID)
+                    );
             }
         });
     }
@@ -257,11 +265,12 @@ public class StructuredLoggingService {
     
     /**
      * Helper method to execute code with MDC context
+     * Uses Optional to eliminate if-statement
      */
     private void withMDC(Map<String, String> contextMap, Runnable operation) {
         // Store current MDC state
         Map<String, String> previousContext = MDC.getCopyOfContextMap();
-        
+
         try {
             // Set new context
             contextMap.forEach(MDC::put);
@@ -269,9 +278,8 @@ public class StructuredLoggingService {
         } finally {
             // Restore previous context
             MDC.clear();
-            if (previousContext != null) {
-                MDC.setContextMap(previousContext);
-            }
+            Optional.ofNullable(previousContext)
+                .ifPresent(MDC::setContextMap);
         }
     }
     
@@ -332,17 +340,17 @@ public class StructuredLoggingService {
     
     /**
      * Generate correlation ID if not present
+     * Uses Optional to eliminate if-statement
      */
     public String ensureCorrelationId(String existingCorrelationId) {
-        if (existingCorrelationId != null && !existingCorrelationId.trim().isEmpty()) {
-            return existingCorrelationId;
-        }
-        
-        String correlationId = "TM-" + System.currentTimeMillis() + "-" + 
-                              Integer.toHexString((int) (Math.random() * 65536));
-        
-        MDC.put(CORRELATION_ID, correlationId);
-        return correlationId;
+        return Optional.ofNullable(existingCorrelationId)
+            .filter(id -> !id.trim().isEmpty())
+            .orElseGet(() -> {
+                String correlationId = "TM-" + System.currentTimeMillis() + "-" +
+                                      Integer.toHexString((int) (Math.random() * 65536));
+                MDC.put(CORRELATION_ID, correlationId);
+                return correlationId;
+            });
     }
     
     /**

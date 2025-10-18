@@ -55,30 +55,38 @@ public class StandardOrderRouter implements OrderRouter {
         }
     }
     
+    /**
+     * Determine routing strategy - uses Optional to eliminate if-statement
+     */
     private RoutingDecision determineRoutingStrategy(Order order) {
-        // Check market hours first
-        if (!isMarketOpen()) {
-            return RoutingDecision.delayed(DEFAULT_BROKER, order.getExchange(), 
-                                         getMarketOpenTime(), getRouterName());
-        }
-        
-        // Route based on order type
-        return switch (order.getOrderType()) {
-            case MARKET -> routeMarketOrder(order);
-            case LIMIT -> routeLimitOrder(order);
-            case STOP_LOSS -> routeStopLossOrder(order);
-            case STOP_LIMIT -> routeStopLimitOrder(order);
-        };
+        // Check market hours first - eliminates if-statement with Optional
+        return Optional.of(isMarketOpen())
+            .filter(open -> open)
+            .map(open -> {
+                // Route based on order type
+                return switch (order.getOrderType()) {
+                    case MARKET -> routeMarketOrder(order);
+                    case LIMIT -> routeLimitOrder(order);
+                    case STOP_LOSS -> routeStopLossOrder(order);
+                    case STOP_LIMIT -> routeStopLimitOrder(order);
+                };
+            })
+            .orElseGet(() -> RoutingDecision.delayed(DEFAULT_BROKER, order.getExchange(),
+                                                     getMarketOpenTime(), getRouterName()));
     }
     
+    /**
+     * Route market order - uses Optional to eliminate if-statement
+     */
     private RoutingDecision routeMarketOrder(Order order) {
         // Market orders always execute immediately
         String venue = selectBestVenue(order);
         String broker = selectBestBroker(order);
-        
-        // For very large orders, consider slicing
-        if (isLargeOrder(order)) {
-            return RoutingDecision.builder()
+
+        // For very large orders, consider slicing - eliminates if-statement with Optional
+        return Optional.of(isLargeOrder(order))
+            .filter(isLarge -> isLarge)
+            .map(isLarge -> RoutingDecision.builder()
                 .brokerName(broker)
                 .venue(venue)
                 .strategy(ExecutionStrategy.SLICED)
@@ -87,46 +95,51 @@ public class StandardOrderRouter implements OrderRouter {
                 .confidence(0.9)
                 .routerName(getRouterName())
                 .reason("Large market order - using slicing strategy")
-                .build();
-        }
-        
-        return RoutingDecision.immediate(broker, venue, getRouterName());
+                .build())
+            .orElseGet(() -> RoutingDecision.immediate(broker, venue, getRouterName()));
     }
     
+    /**
+     * Route limit order - uses Optional to eliminate if-statements
+     */
     private RoutingDecision routeLimitOrder(Order order) {
         String venue = selectBestVenue(order);
         String broker = selectBestBroker(order);
-        
+
         // Check if limit price is aggressively priced (likely to execute immediately)
-        if (isAggressivelyPriced(order)) {
-            return RoutingDecision.immediate(broker, venue, getRouterName());
-        }
-        
-        // For large limit orders, consider iceberg strategy
-        if (isLargeOrder(order)) {
-            return RoutingDecision.builder()
-                .brokerName(broker)
-                .venue(venue)
-                .strategy(ExecutionStrategy.ICEBERG)
-                .immediateExecution(false)
-                .estimatedExecutionTime(Instant.now().plusSeconds(300)) // 5 minutes estimate
-                .confidence(0.7)
-                .routerName(getRouterName())
-                .reason("Large limit order - using iceberg strategy")
-                .build();
-        }
-        
-        // Standard limit order routing
-        return RoutingDecision.builder()
-            .brokerName(broker)
-            .venue(venue)
-            .strategy(ExecutionStrategy.SMART)
-            .immediateExecution(false)
-            .estimatedExecutionTime(Instant.now().plusSeconds(60)) // 1 minute estimate
-            .confidence(0.8)
-            .routerName(getRouterName())
-            .reason("Standard limit order routing")
-            .build();
+        // Eliminates first if-statement with Optional
+        return Optional.of(isAggressivelyPriced(order))
+            .filter(aggressive -> aggressive)
+            .map(aggressive -> RoutingDecision.immediate(broker, venue, getRouterName()))
+            .orElseGet(() -> {
+                // For large limit orders, consider iceberg strategy
+                // Eliminates second if-statement with Optional
+                return Optional.of(isLargeOrder(order))
+                    .filter(isLarge -> isLarge)
+                    .map(isLarge -> RoutingDecision.builder()
+                        .brokerName(broker)
+                        .venue(venue)
+                        .strategy(ExecutionStrategy.ICEBERG)
+                        .immediateExecution(false)
+                        .estimatedExecutionTime(Instant.now().plusSeconds(300)) // 5 minutes estimate
+                        .confidence(0.7)
+                        .routerName(getRouterName())
+                        .reason("Large limit order - using iceberg strategy")
+                        .build())
+                    .orElseGet(() -> {
+                        // Standard limit order routing
+                        return RoutingDecision.builder()
+                            .brokerName(broker)
+                            .venue(venue)
+                            .strategy(ExecutionStrategy.SMART)
+                            .immediateExecution(false)
+                            .estimatedExecutionTime(Instant.now().plusSeconds(60)) // 1 minute estimate
+                            .confidence(0.8)
+                            .routerName(getRouterName())
+                            .reason("Standard limit order routing")
+                            .build();
+                    });
+            });
     }
     
     private RoutingDecision routeStopLossOrder(Order order) {

@@ -5,6 +5,8 @@ import jakarta.validation.constraints.Positive;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.validation.annotation.Validated;
 
+import java.util.Optional;
+
 /**
  * JWT Configuration Properties
  * 
@@ -49,17 +51,21 @@ public record JwtConfigurationProperties(
     
     /**
      * Constructor with default values
+     * Uses Optional to eliminate if-statements
      */
     public JwtConfigurationProperties {
-        if (expirationMinutes == 0) {
-            expirationMinutes = 15; // Default 15 minutes
-        }
-        if (refreshExpirationDays == 0) {
-            refreshExpirationDays = 7; // Default 7 days
-        }
-        if (issuer == null || issuer.isBlank()) {
-            issuer = "trademaster";
-        }
+        // Use Optional to provide default values, eliminating if-statements
+        expirationMinutes = Optional.of(expirationMinutes)
+            .filter(minutes -> minutes != 0)
+            .orElse(15L); // Default 15 minutes
+
+        refreshExpirationDays = Optional.of(refreshExpirationDays)
+            .filter(days -> days != 0)
+            .orElse(7L); // Default 7 days
+
+        issuer = Optional.ofNullable(issuer)
+            .filter(iss -> !iss.isBlank())
+            .orElse("trademaster");
     }
     
     /**

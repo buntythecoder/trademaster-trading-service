@@ -9,6 +9,8 @@ import lombok.NoArgsConstructor;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
+import java.util.stream.Stream;
 
 /**
  * Position Summary DTO
@@ -172,28 +174,50 @@ public class PositionSummary {
     }
     
     /**
-     * Calculate position metrics
+     * Calculate position metrics - eliminates if-statements with Optional
      */
     public void calculateMetrics() {
-        if (longQuantity != null && shortQuantity != null) {
-            netQuantity = longQuantity - shortQuantity;
-            netSide = netQuantity >= 0 ? PositionSide.LONG : PositionSide.SHORT;
-        }
-        
-        if (unrealizedPnL != null && totalMarketValue != null && totalMarketValue.compareTo(BigDecimal.ZERO) > 0) {
-            unrealizedPnLPercent = unrealizedPnL.divide(totalMarketValue, 4, java.math.RoundingMode.HALF_UP)
-                                                .multiply(BigDecimal.valueOf(100));
-        }
-        
-        if (totalPnL != null && totalMarketValue != null && totalMarketValue.compareTo(BigDecimal.ZERO) > 0) {
-            totalPnLPercent = totalPnL.divide(totalMarketValue, 4, java.math.RoundingMode.HALF_UP)
-                                     .multiply(BigDecimal.valueOf(100));
-        }
-        
-        if (dailyPnL != null && totalMarketValue != null && totalMarketValue.compareTo(BigDecimal.ZERO) > 0) {
-            dailyPnLPercent = dailyPnL.divide(totalMarketValue, 4, java.math.RoundingMode.HALF_UP)
-                                     .multiply(BigDecimal.valueOf(100));
-        }
+        // Calculate net quantity and side - eliminates if-statement and ternary with Optional
+        Optional.ofNullable(longQuantity)
+            .flatMap(longQty -> Optional.ofNullable(shortQuantity)
+                .map(shortQty -> {
+                    netQuantity = longQty - shortQty;
+                    netSide = Optional.of(netQuantity >= 0)
+                        .filter(Boolean::booleanValue)
+                        .map(isPositive -> PositionSide.LONG)
+                        .orElse(PositionSide.SHORT);
+                    return true;
+                }));
+
+        // Calculate unrealized P&L percentage - eliminates if-statement
+        Optional.ofNullable(unrealizedPnL)
+            .flatMap(pnl -> Optional.ofNullable(totalMarketValue)
+                .filter(value -> value.compareTo(BigDecimal.ZERO) > 0)
+                .map(value -> {
+                    unrealizedPnLPercent = pnl.divide(value, 4, java.math.RoundingMode.HALF_UP)
+                        .multiply(BigDecimal.valueOf(100));
+                    return true;
+                }));
+
+        // Calculate total P&L percentage - eliminates if-statement
+        Optional.ofNullable(totalPnL)
+            .flatMap(pnl -> Optional.ofNullable(totalMarketValue)
+                .filter(value -> value.compareTo(BigDecimal.ZERO) > 0)
+                .map(value -> {
+                    totalPnLPercent = pnl.divide(value, 4, java.math.RoundingMode.HALF_UP)
+                        .multiply(BigDecimal.valueOf(100));
+                    return true;
+                }));
+
+        // Calculate daily P&L percentage - eliminates if-statement
+        Optional.ofNullable(dailyPnL)
+            .flatMap(pnl -> Optional.ofNullable(totalMarketValue)
+                .filter(value -> value.compareTo(BigDecimal.ZERO) > 0)
+                .map(value -> {
+                    dailyPnLPercent = pnl.divide(value, 4, java.math.RoundingMode.HALF_UP)
+                        .multiply(BigDecimal.valueOf(100));
+                    return true;
+                }));
     }
     
     /**
@@ -212,32 +236,39 @@ public class PositionSummary {
     }
     
     /**
-     * Get position concentration risk level
+     * Get position concentration risk level - eliminates if-else chain with Stream pattern
      */
     public String getConcentrationRisk() {
-        if (allocationPercent == null) return "UNKNOWN";
-        
-        if (allocationPercent.compareTo(new BigDecimal("20.0")) > 0) {
-            return "HIGH";
-        } else if (allocationPercent.compareTo(new BigDecimal("10.0")) > 0) {
-            return "MEDIUM";
-        } else {
-            return "LOW";
-        }
+        return Optional.ofNullable(allocationPercent)
+            .map(allocation -> {
+                record ConcentrationThreshold(BigDecimal minAllocation, String riskLevel) {}
+
+                return Stream.of(
+                    new ConcentrationThreshold(new BigDecimal("20.0"), "HIGH"),
+                    new ConcentrationThreshold(new BigDecimal("10.0"), "MEDIUM")
+                )
+                .filter(threshold -> allocation.compareTo(threshold.minAllocation()) > 0)
+                .findFirst()
+                .map(ConcentrationThreshold::riskLevel)
+                .orElse("LOW");
+            })
+            .orElse("UNKNOWN");
     }
     
     /**
-     * Get position status based on P&L and risk metrics
+     * Get position status based on P&L and risk metrics - eliminates if-else chain with Stream pattern
      */
     public String getPositionStatus() {
-        if (isAtRisk()) {
-            return "AT_RISK";
-        } else if (isProfitable()) {
-            return "PROFITABLE";
-        } else if (totalPnL != null && totalPnL.compareTo(BigDecimal.ZERO) < 0) {
-            return "LOSING";
-        } else {
-            return "NEUTRAL";
-        }
+        record StatusCondition(java.util.function.Supplier<Boolean> condition, String status) {}
+
+        return Stream.of(
+            new StatusCondition(this::isAtRisk, "AT_RISK"),
+            new StatusCondition(this::isProfitable, "PROFITABLE"),
+            new StatusCondition(() -> totalPnL != null && totalPnL.compareTo(BigDecimal.ZERO) < 0, "LOSING")
+        )
+        .filter(statusCondition -> statusCondition.condition().get())
+        .findFirst()
+        .map(StatusCondition::status)
+        .orElse("NEUTRAL");
     }
 }

@@ -5,6 +5,7 @@ import lombok.Data;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Validation Result
@@ -153,11 +154,14 @@ public class ValidationResult {
     }
     
     /**
-     * Get consolidated error message for display
+     * Get consolidated error message for display - eliminates ternary with Optional
      */
     public String getConsolidatedErrorMessage() {
         List<String> errors = getErrorMessages();
-        return errors.isEmpty() ? "" : String.join("; ", errors);
+        return Optional.of(errors)
+            .filter(list -> !list.isEmpty())
+            .map(list -> String.join("; ", list))
+            .orElse("");
     }
     
     /**

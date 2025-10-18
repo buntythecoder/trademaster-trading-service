@@ -22,6 +22,7 @@ import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Security Configuration for Trading Service
@@ -66,16 +67,18 @@ public class SecurityConfig {
             // Security Headers Configuration
             .headers(headers -> headers
                 // Strict Transport Security (HSTS) - only if SSL enabled
-                .httpStrictTransportSecurity(hstsConfig -> {
-                    if (sslEnabled) {
-                        hstsConfig
-                            .maxAgeInSeconds(31536000) // 1 year
-                            .includeSubDomains(true)
-                            .preload(true);
-                    } else {
-                        hstsConfig.disable();
-                    }
-                })
+                // Uses Optional to eliminate if-statement
+                .httpStrictTransportSecurity(hstsConfig ->
+                    Optional.of(sslEnabled)
+                        .filter(enabled -> enabled)
+                        .ifPresentOrElse(
+                            enabled -> hstsConfig
+                                .maxAgeInSeconds(31536000) // 1 year
+                                .includeSubDomains(true)
+                                .preload(true),
+                            hstsConfig::disable
+                        )
+                )
                 
                 // Content Security Policy
                 .contentSecurityPolicy(csp -> csp
@@ -129,38 +132,45 @@ public class SecurityConfig {
             .exceptionHandling(ex -> ex.authenticationEntryPoint(jwtAuthenticationEntryPoint))
             .addFilterBefore(serviceApiKeyFilter, UsernamePasswordAuthenticationFilter.class)
             .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
-            
-        // Require SSL/HTTPS if enabled
-        if (requireSsl && sslEnabled) {
-            httpSecurity.requiresChannel(channel -> 
-                channel.requestMatchers(r -> true).requiresSecure()
-            );
-        }
-        
-        return httpSecurity.build();
+
+        // Require SSL/HTTPS if enabled - uses Optional to eliminate if-statement
+        HttpSecurity finalHttpSecurity = Optional.of(requireSsl && sslEnabled)
+            .filter(required -> required)
+            .map(required -> {
+                try {
+                    return httpSecurity.requiresChannel(channel ->
+                        channel.requestMatchers(r -> true).requiresSecure()
+                    );
+                } catch (Exception e) {
+                    throw new RuntimeException("Failed to configure SSL channel", e);
+                }
+            })
+            .orElse(httpSecurity);
+
+        return finalHttpSecurity.build();
     }
     
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        
+
         // Allow specific origins (configure based on environment and SSL status)
-        List<String> allowedOrigins;
-        if (sslEnabled) {
-            allowedOrigins = List.of(
+        // Uses Optional to eliminate if-statement
+        List<String> allowedOrigins = Optional.of(sslEnabled)
+            .filter(enabled -> enabled)
+            .map(enabled -> List.of(
                 "https://localhost:3000",     // React development server (HTTPS)
                 "https://localhost:8080",     // Frontend production (HTTPS)
                 "https://*.trademaster.com",  // Production domains (HTTPS)
                 "http://localhost:3000",      // Fallback for development
                 "http://localhost:8080"       // Fallback for local testing
-            );
-        } else {
-            allowedOrigins = List.of(
+            ))
+            .orElse(List.of(
                 "http://localhost:3000",      // React development server
                 "http://localhost:8080",      // Frontend production
                 "https://*.trademaster.com"   // Production domains
-            );
-        }
+            ));
+
         configuration.setAllowedOriginPatterns(allowedOrigins);
         
         // Allow specific methods

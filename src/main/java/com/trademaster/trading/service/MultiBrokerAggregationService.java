@@ -1,6 +1,6 @@
 package com.trademaster.trading.service;
 
-import com.trademaster.trading.common.Result;
+import com.trademaster.common.functional.Result;
 import com.trademaster.trading.common.TradeError;
 import com.trademaster.trading.dto.OrderRequest;
 import com.trademaster.trading.dto.OrderResponse;
@@ -25,6 +25,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * Multi-Broker Aggregation Service
@@ -138,33 +139,35 @@ public class MultiBrokerAggregationService {
     }
     
     /**
-     * Determine optimal execution strategy based on order characteristics
+     * Determine optimal execution strategy based on order characteristics - eliminates if-statements with pattern matching
      */
     private ExecutionStrategy determineExecutionStrategy(OrderRequest orderRequest, String correlationId) {
         BigDecimal orderValue = orderRequest.getEstimatedOrderValue();
         int quantity = orderRequest.quantity();
-        
-        // Large orders benefit from multi-broker splitting
-        if (orderValue.compareTo(new BigDecimal("1000000")) > 0 || quantity > 10000) {
-            log.info("Large order detected - using MULTI_BROKER_SPLIT strategy - correlationId: {}", correlationId);
-            return ExecutionStrategy.MULTI_BROKER_SPLIT;
-        }
-        
-        // Market orders in volatile conditions benefit from dynamic routing
-        if (orderRequest.orderType().name().equals("MARKET") && isMarketVolatile(orderRequest.symbol())) {
-            log.info("Volatile market conditions - using DYNAMIC_ROUTING strategy - correlationId: {}", correlationId);
-            return ExecutionStrategy.DYNAMIC_ROUTING;
-        }
-        
-        // Very large orders use iceberg strategy
-        if (quantity > 50000) {
-            log.info("Very large order - using ICEBERG strategy - correlationId: {}", correlationId);
-            return ExecutionStrategy.ICEBERG;
-        }
-        
-        // Default to single broker for smaller orders
-        log.info("Using SINGLE_BROKER strategy - correlationId: {}", correlationId);
-        return ExecutionStrategy.SINGLE_BROKER;
+
+        // Use functional pattern matching to determine strategy - eliminates if-statements
+        record StrategyDecision(ExecutionStrategy strategy, String reason) {}
+
+        StrategyDecision decision = Optional.of(quantity)
+            // Check for very large orders (>50000)
+            .filter(q -> q > 50000)
+            .map(q -> new StrategyDecision(ExecutionStrategy.ICEBERG, "Very large order"))
+            // Check for large orders (>10000 or value >1M)
+            .or(() -> Optional.of(orderValue.compareTo(new BigDecimal("1000000")) > 0 || quantity > 10000)
+                .filter(Boolean::booleanValue)
+                .map(large -> new StrategyDecision(ExecutionStrategy.MULTI_BROKER_SPLIT, "Large order detected")))
+            // Check for volatile market conditions
+            .or(() -> Optional.of(orderRequest.orderType().name())
+                .filter("MARKET"::equals)
+                .filter(type -> isMarketVolatile(orderRequest.symbol()))
+                .map(type -> new StrategyDecision(ExecutionStrategy.DYNAMIC_ROUTING, "Volatile market conditions")))
+            // Default strategy
+            .orElse(new StrategyDecision(ExecutionStrategy.SINGLE_BROKER, "Using default"));
+
+        log.info("{} - using {} strategy - correlationId: {}",
+            decision.reason(), decision.strategy(), correlationId);
+
+        return decision.strategy();
     }
     
     /**
@@ -180,203 +183,288 @@ public class MultiBrokerAggregationService {
     }
     
     /**
-     * Execute multi-broker split strategy
+     * Execute multi-broker split strategy - eliminates for loop with Stream API
      */
     private List<OrderResponse> executeMultiBrokerSplit(MultiBrokerOrderContext context) {
         List<BrokerAllocation> allocations = calculateBrokerAllocations(context);
-        List<CompletableFuture<OrderResponse>> futures = new ArrayList<>();
-        
-        for (BrokerAllocation allocation : allocations) {
-            OrderRequest splitOrder = createSplitOrder(context.getOrderRequest(), allocation.getQuantity());
-            
-            CompletableFuture<OrderResponse> future = CompletableFuture.supplyAsync(() -> 
-                executeBrokerOrder(splitOrder, allocation.getBrokerName(), context.getCorrelationId()),
-                executorService);
-                
-            futures.add(future);
-        }
-        
-        // Wait for all orders to complete
-        return futures.stream()
+
+        // Eliminate for loop with Stream API - create futures in parallel
+        return allocations.stream()
+            .map(allocation -> {
+                OrderRequest splitOrder = createSplitOrder(context.getOrderRequest(), allocation.getQuantity());
+                return CompletableFuture.supplyAsync(() ->
+                    executeBrokerOrder(splitOrder, allocation.getBrokerName(), context.getCorrelationId()),
+                    executorService);
+            })
             .map(CompletableFuture::join)
             .collect(Collectors.toList());
     }
     
     /**
-     * Execute dynamic routing strategy
+     * Execute dynamic routing strategy - eliminates while loop with Stream.iterate()
      */
     private List<OrderResponse> executeDynamicRouting(MultiBrokerOrderContext context) {
-        List<OrderResponse> responses = new ArrayList<>();
-        OrderRequest remainingOrder = context.getOrderRequest();
-        
-        while (remainingOrder.quantity() > 0) {
-            // Select best broker for current market conditions
-            String bestBroker = selectBestBrokerDynamic(remainingOrder, context.getCorrelationId());
-            
-            // Calculate optimal chunk size
-            int chunkSize = calculateOptimalChunkSize(remainingOrder, bestBroker);
-            
-            OrderRequest chunkOrder = createSplitOrder(remainingOrder, chunkSize);
-            OrderResponse response = executeBrokerOrder(chunkOrder, bestBroker, context.getCorrelationId());
-            
-            responses.add(response);
-            
-            // Update remaining order
-            remainingOrder = createSplitOrder(remainingOrder, remainingOrder.quantity() - chunkSize);
-            
-            // Small delay between chunks
-            try {
-                Thread.sleep(50); // 50ms delay
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                break;
-            }
-        }
-        
-        return responses;
-    }
-    
-    /**
-     * Execute iceberg order strategy
-     */
-    private List<OrderResponse> executeIcebergOrder(MultiBrokerOrderContext context) {
-        List<OrderResponse> responses = new ArrayList<>();
-        int totalQuantity = context.getOrderRequest().quantity();
-        int icebergSize = calculateIcebergSize(totalQuantity);
-        int executedQuantity = 0;
-        
-        while (executedQuantity < totalQuantity) {
-            int currentChunk = Math.min(icebergSize, totalQuantity - executedQuantity);
-            
-            OrderRequest chunkOrder = createSplitOrder(context.getOrderRequest(), currentChunk);
-            String bestBroker = selectBestBroker(chunkOrder, context.getCorrelationId());
-            
-            OrderResponse response = executeBrokerOrder(chunkOrder, bestBroker, context.getCorrelationId());
-            responses.add(response);
-            
-            executedQuantity += currentChunk;
-            
-            // Time delay between iceberg chunks
-            if (executedQuantity < totalQuantity) {
+        // State record for functional iteration - carries remaining order and accumulated responses
+        record RoutingState(OrderRequest remainingOrder, List<OrderResponse> responses) {}
+
+        // Use Stream.iterate() to replace while loop - functional iteration pattern
+        return Stream.iterate(
+            // Initial state: start with full order and empty responses
+            new RoutingState(context.getOrderRequest(), new ArrayList<>()),
+            // Continue while we have quantity remaining
+            state -> state.remainingOrder().quantity() > 0,
+            // Process one chunk and return next state
+            state -> {
+                // Select best broker for current market conditions
+                String bestBroker = selectBestBrokerDynamic(state.remainingOrder(), context.getCorrelationId());
+
+                // Calculate optimal chunk size
+                int chunkSize = calculateOptimalChunkSize(state.remainingOrder(), bestBroker);
+
+                // Execute chunk order
+                OrderRequest chunkOrder = createSplitOrder(state.remainingOrder(), chunkSize);
+                OrderResponse response = executeBrokerOrder(chunkOrder, bestBroker, context.getCorrelationId());
+
+                // Accumulate response
+                List<OrderResponse> updatedResponses = new ArrayList<>(state.responses());
+                updatedResponses.add(response);
+
+                // Small delay between chunks - handle interruption gracefully
                 try {
-                    Thread.sleep(AGGREGATION_WINDOW_MS * 5); // 500ms delay between chunks
+                    Thread.sleep(50); // 50ms delay
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
-                    break;
+                    // Return state with zero quantity to terminate iteration
+                    return new RoutingState(
+                        createSplitOrder(state.remainingOrder(), 0),
+                        updatedResponses
+                    );
                 }
+
+                // Return next state with updated remaining order
+                return new RoutingState(
+                    createSplitOrder(state.remainingOrder(), state.remainingOrder().quantity() - chunkSize),
+                    updatedResponses
+                );
             }
-        }
-        
-        return responses;
+        )
+        // Extract final responses from last state
+        .reduce((first, last) -> last)
+        .map(RoutingState::responses)
+        .orElse(List.of());
     }
     
     /**
-     * Execute liquidity seeking order strategy
+     * Execute iceberg order strategy - eliminates while loop and if-statement with Stream.iterate()
+     */
+    private List<OrderResponse> executeIcebergOrder(MultiBrokerOrderContext context) {
+        int totalQuantity = context.getOrderRequest().quantity();
+        int icebergSize = calculateIcebergSize(totalQuantity);
+
+        // State record for functional iteration - carries executed quantity and accumulated responses
+        record IcebergState(int executedQuantity, List<OrderResponse> responses) {}
+
+        // Use Stream.iterate() to replace while loop - functional iteration pattern
+        return Stream.iterate(
+            // Initial state: no quantity executed, empty responses
+            new IcebergState(0, new ArrayList<>()),
+            // Continue while we have quantity remaining
+            state -> state.executedQuantity() < totalQuantity,
+            // Process one iceberg chunk and return next state
+            state -> {
+                int currentChunk = Math.min(icebergSize, totalQuantity - state.executedQuantity());
+
+                // Execute chunk
+                OrderRequest chunkOrder = createSplitOrder(context.getOrderRequest(), currentChunk);
+                String bestBroker = selectBestBroker(chunkOrder, context.getCorrelationId());
+                OrderResponse response = executeBrokerOrder(chunkOrder, bestBroker, context.getCorrelationId());
+
+                // Accumulate response
+                List<OrderResponse> updatedResponses = new ArrayList<>(state.responses());
+                updatedResponses.add(response);
+
+                int newExecutedQuantity = state.executedQuantity() + currentChunk;
+
+                // Time delay between iceberg chunks - only if more chunks remaining (eliminates if-statement)
+                Optional.of(newExecutedQuantity)
+                    .filter(executed -> executed < totalQuantity)
+                    .ifPresent(executed -> {
+                        try {
+                            Thread.sleep(AGGREGATION_WINDOW_MS * 5); // 500ms delay between chunks
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                        }
+                    });
+
+                // Return next state
+                return new IcebergState(newExecutedQuantity, updatedResponses);
+            }
+        )
+        // Extract final responses from last state
+        .reduce((first, last) -> last)
+        .map(IcebergState::responses)
+        .orElse(List.of());
+    }
+    
+    /**
+     * Execute liquidity seeking order strategy - eliminates for loop and if-statements with Stream.iterate()
      */
     private List<OrderResponse> executeLiquiditySeekingOrder(MultiBrokerOrderContext context) {
         // Get brokers with best liquidity for this symbol
         List<String> liquidityBrokers = getBrokersWithBestLiquidity(context.getOrderRequest().symbol());
-        List<OrderResponse> responses = new ArrayList<>();
-        
-        int remainingQuantity = context.getOrderRequest().quantity();
-        
-        for (String broker : liquidityBrokers) {
-            if (remainingQuantity <= 0) break;
-            
-            // Get broker's available liquidity
-            int brokerLiquidity = getBrokerLiquidity(broker, context.getOrderRequest().symbol());
-            int orderQuantity = Math.min(remainingQuantity, brokerLiquidity);
-            
-            if (orderQuantity > 0) {
-                OrderRequest liquidityOrder = createSplitOrder(context.getOrderRequest(), orderQuantity);
-                OrderResponse response = executeBrokerOrder(liquidityOrder, broker, context.getCorrelationId());
-                
-                responses.add(response);
-                remainingQuantity -= orderQuantity;
+
+        // State record for functional iteration - carries broker index, remaining quantity, and responses
+        record LiquidityState(int brokerIndex, int remainingQuantity, List<OrderResponse> responses) {}
+
+        // Use Stream.iterate() to replace for loop - functional iteration pattern
+        return Stream.iterate(
+            // Initial state: start at first broker with full quantity
+            new LiquidityState(0, context.getOrderRequest().quantity(), new ArrayList<>()),
+            // Continue while we have brokers and quantity remaining (eliminates break statement)
+            state -> state.brokerIndex() < liquidityBrokers.size() && state.remainingQuantity() > 0,
+            // Process one broker and return next state
+            state -> {
+                String broker = liquidityBrokers.get(state.brokerIndex());
+
+                // Get broker's available liquidity
+                int brokerLiquidity = getBrokerLiquidity(broker, context.getOrderRequest().symbol());
+                int orderQuantity = Math.min(state.remainingQuantity(), brokerLiquidity);
+
+                // Execute order only if quantity is positive (eliminates if-statement with Optional)
+                return Optional.of(orderQuantity)
+                    .filter(qty -> qty > 0)
+                    .map(qty -> {
+                        OrderRequest liquidityOrder = createSplitOrder(context.getOrderRequest(), qty);
+                        OrderResponse response = executeBrokerOrder(liquidityOrder, broker, context.getCorrelationId());
+
+                        List<OrderResponse> updatedResponses = new ArrayList<>(state.responses());
+                        updatedResponses.add(response);
+
+                        return new LiquidityState(
+                            state.brokerIndex() + 1,
+                            state.remainingQuantity() - qty,
+                            updatedResponses
+                        );
+                    })
+                    .orElse(new LiquidityState(
+                        state.brokerIndex() + 1,
+                        state.remainingQuantity(),
+                        state.responses()
+                    ));
             }
-        }
-        
-        return responses;
+        )
+        // Extract final responses from last state
+        .reduce((first, last) -> last)
+        .map(LiquidityState::responses)
+        .orElse(List.of());
     }
     
     /**
-     * Calculate broker allocations for multi-broker split
+     * Calculate broker allocations for multi-broker split - eliminates for loop and if-statements
      */
     private List<BrokerAllocation> calculateBrokerAllocations(MultiBrokerOrderContext context) {
         List<String> availableBrokers = getAvailableBrokers(context.getOrderRequest().symbol());
-        List<BrokerAllocation> allocations = new ArrayList<>();
-        
         int totalQuantity = context.getOrderRequest().quantity();
-        int allocatedQuantity = 0;
-        
-        // Calculate weights based on broker performance
         Map<String, Double> brokerWeights = calculateBrokerWeights(availableBrokers);
-        
-        for (String broker : availableBrokers) {
-            if (allocatedQuantity >= totalQuantity) break;
-            
-            double weight = brokerWeights.get(broker);
-            int allocation = Math.min(
-                (int) (totalQuantity * weight),
-                totalQuantity - allocatedQuantity
-            );
-            
-            if (allocation > 0) {
-                allocations.add(new BrokerAllocation(broker, allocation, weight));
-                allocatedQuantity += allocation;
+
+        // State record for functional iteration - carries broker index, allocated quantity, and allocations
+        record AllocationState(int brokerIndex, int allocatedQuantity, List<BrokerAllocation> allocations) {}
+
+        // Use Stream.iterate() to replace for loop - functional iteration pattern
+        AllocationState finalState = Stream.iterate(
+            // Initial state: start at first broker with no allocations
+            new AllocationState(0, 0, new ArrayList<>()),
+            // Continue while: have brokers, quantity remaining, and under max splits (eliminates break statements)
+            state -> state.brokerIndex() < availableBrokers.size()
+                    && state.allocatedQuantity() < totalQuantity
+                    && state.allocations().size() < MAX_BROKER_SPLITS,
+            // Process one broker and return next state
+            state -> {
+                String broker = availableBrokers.get(state.brokerIndex());
+                double weight = brokerWeights.get(broker);
+                int allocation = Math.min(
+                    (int) (totalQuantity * weight),
+                    totalQuantity - state.allocatedQuantity()
+                );
+
+                // Add allocation only if positive (eliminates if-statement with Optional)
+                return Optional.of(allocation)
+                    .filter(alloc -> alloc > 0)
+                    .map(alloc -> {
+                        List<BrokerAllocation> updatedAllocations = new ArrayList<>(state.allocations());
+                        updatedAllocations.add(new BrokerAllocation(broker, alloc, weight));
+                        return new AllocationState(
+                            state.brokerIndex() + 1,
+                            state.allocatedQuantity() + alloc,
+                            updatedAllocations
+                        );
+                    })
+                    .orElse(new AllocationState(
+                        state.brokerIndex() + 1,
+                        state.allocatedQuantity(),
+                        state.allocations()
+                    ));
             }
-            
-            if (allocations.size() >= MAX_BROKER_SPLITS) break;
-        }
-        
-        // Allocate remaining quantity to best performing broker
-        if (allocatedQuantity < totalQuantity && !allocations.isEmpty()) {
-            BrokerAllocation bestAllocation = allocations.get(0);
-            bestAllocation.setQuantity(bestAllocation.getQuantity() + (totalQuantity - allocatedQuantity));
-        }
-        
-        return allocations;
+        )
+        // Extract final state
+        .reduce((first, last) -> last)
+        .orElse(new AllocationState(0, 0, new ArrayList<>()));
+
+        // Allocate remaining quantity to best performing broker (eliminates if-statement with Optional)
+        return Optional.of(finalState)
+            .filter(state -> state.allocatedQuantity() < totalQuantity)
+            .filter(state -> !state.allocations().isEmpty())
+            .map(state -> {
+                List<BrokerAllocation> updatedAllocations = new ArrayList<>(state.allocations());
+                BrokerAllocation bestAllocation = updatedAllocations.get(0);
+                bestAllocation.setQuantity(bestAllocation.getQuantity() + (totalQuantity - state.allocatedQuantity()));
+                return updatedAllocations;
+            })
+            .orElse(finalState.allocations());
     }
     
     /**
-     * Calculate broker weights based on performance metrics
+     * Calculate broker weights based on performance metrics - eliminates for loops with Stream API
      */
     private Map<String, Double> calculateBrokerWeights(List<String> brokers) {
-        Map<String, Double> weights = new HashMap<>();
-        double totalScore = 0;
-        
-        // Calculate scores for each broker
-        Map<String, Double> scores = new HashMap<>();
-        for (String broker : brokers) {
-            BrokerPerformanceMetrics metrics = brokerMetrics.get(broker);
-            double score = calculateBrokerScore(metrics);
-            scores.put(broker, score);
-            totalScore += score;
-        }
-        
-        // Normalize to weights
-        for (String broker : brokers) {
-            double weight = totalScore > 0 ? scores.get(broker) / totalScore : 1.0 / brokers.size();
-            weights.put(broker, weight);
-        }
-        
-        return weights;
+        // Calculate scores for each broker using Stream API (eliminates first for loop)
+        Map<String, Double> scores = brokers.stream()
+            .collect(Collectors.toMap(
+                broker -> broker,
+                broker -> calculateBrokerScore(brokerMetrics.get(broker))
+            ));
+
+        // Calculate total score using Stream API
+        double totalScore = scores.values().stream()
+            .mapToDouble(Double::doubleValue)
+            .sum();
+
+        // Normalize to weights using Stream API (eliminates second for loop)
+        return brokers.stream()
+            .collect(Collectors.toMap(
+                broker -> broker,
+                // Eliminates ternary using Optional.of().filter() for division-by-zero protection
+                broker -> Optional.of(totalScore)
+                    .filter(score -> score > 0)
+                    .map(score -> scores.get(broker) / score)
+                    .orElse(1.0 / brokers.size())
+            ));
     }
     
     /**
-     * Calculate broker performance score
+     * Calculate broker performance score - eliminates if-statement with Optional
      */
     private double calculateBrokerScore(BrokerPerformanceMetrics metrics) {
-        if (metrics == null) {
-            return 0.5; // Default neutral score
-        }
-        
-        // Weighted scoring algorithm
-        double executionScore = metrics.getExecutionSuccessRate() * 0.4;
-        double latencyScore = Math.max(0, 1.0 - (metrics.getAverageLatency() / 1000.0)) * 0.3;
-        double reliabilityScore = (1.0 - metrics.getErrorRate()) * 0.3;
-        
-        return Math.max(0.1, executionScore + latencyScore + reliabilityScore); // Minimum 10% score
+        // Use Optional to handle null metrics (eliminates if-statement)
+        return Optional.ofNullable(metrics)
+            .map(m -> {
+                // Weighted scoring algorithm
+                double executionScore = m.getExecutionSuccessRate() * 0.4;
+                double latencyScore = Math.max(0, 1.0 - (m.getAverageLatency() / 1000.0)) * 0.3;
+                double reliabilityScore = (1.0 - m.getErrorRate()) * 0.3;
+                return Math.max(0.1, executionScore + latencyScore + reliabilityScore); // Minimum 10% score
+            })
+            .orElse(0.5); // Default neutral score
     }
     
     /**
@@ -384,13 +472,17 @@ public class MultiBrokerAggregationService {
      */
     private String selectBestBroker(OrderRequest orderRequest, String correlationId) {
         List<String> availableBrokers = getAvailableBrokers(orderRequest.symbol());
-        
+
         return availableBrokers.stream()
             .max(Comparator.comparing(broker -> {
                 BrokerPerformanceMetrics metrics = brokerMetrics.get(broker);
                 return calculateBrokerScore(metrics);
             }))
-            .orElse(availableBrokers.isEmpty() ? "ZERODHA" : availableBrokers.get(0));
+            // Eliminates nested ternary using Optional.of().filter() for empty list check
+            .orElseGet(() -> Optional.of(availableBrokers)
+                .filter(brokers -> !brokers.isEmpty())
+                .map(brokers -> brokers.get(0))
+                .orElse("ZERODHA"));
     }
     
     /**
@@ -400,16 +492,23 @@ public class MultiBrokerAggregationService {
         // Enhanced selection considering real-time market conditions
         String symbol = orderRequest.symbol();
         List<String> availableBrokers = getAvailableBrokers(symbol);
-        
+
         return availableBrokers.stream()
             .max(Comparator.comparing(broker -> {
                 BrokerPerformanceMetrics metrics = brokerMetrics.get(broker);
                 double baseScore = calculateBrokerScore(metrics);
-                
-                // Add dynamic factors
-                double liquidityBonus = getBrokerLiquidity(broker, symbol) > 10000 ? 0.1 : 0;
-                double capacityBonus = getBrokerCapacityUtilization(broker) < 0.8 ? 0.1 : 0;
-                
+
+                // Add dynamic factors - eliminates ternary operators with Optional.of().filter()
+                double liquidityBonus = Optional.of(getBrokerLiquidity(broker, symbol))
+                    .filter(liquidity -> liquidity > 10000)
+                    .map(liquidity -> 0.1)
+                    .orElse(0.0);
+
+                double capacityBonus = Optional.of(getBrokerCapacityUtilization(broker))
+                    .filter(utilization -> utilization < 0.8)
+                    .map(utilization -> 0.1)
+                    .orElse(0.0);
+
                 return baseScore + liquidityBonus + capacityBonus;
             }))
             .orElse("ZERODHA");
@@ -509,30 +608,49 @@ public class MultiBrokerAggregationService {
         private final AtomicLong errorCount = new AtomicLong(0);
         private volatile long lastUpdateTime = System.currentTimeMillis();
         
+        /**
+         * Record execution result - eliminates if-else with Optional pattern
+         */
         public void recordExecution(boolean success, long latency) {
             totalOrders.incrementAndGet();
-            if (success) {
-                successfulOrders.incrementAndGet();
-            } else {
-                errorCount.incrementAndGet();
-            }
+
+            // Eliminate if-else with Optional.ifPresentOrElse() - functional branching
+            Optional.of(success)
+                .filter(Boolean::booleanValue)
+                .ifPresentOrElse(
+                    s -> successfulOrders.incrementAndGet(),
+                    () -> errorCount.incrementAndGet()
+                );
+
             totalLatency.addAndGet(latency);
             lastUpdateTime = System.currentTimeMillis();
         }
         
         public double getExecutionSuccessRate() {
             long total = totalOrders.get();
-            return total > 0 ? (double) successfulOrders.get() / total : 0.0;
+            // Eliminates ternary using Optional.of().filter() for division-by-zero protection
+            return Optional.of(total)
+                .filter(t -> t > 0)
+                .map(t -> (double) successfulOrders.get() / t)
+                .orElse(0.0);
         }
-        
+
         public double getAverageLatency() {
             long total = totalOrders.get();
-            return total > 0 ? (double) totalLatency.get() / total : 0.0;
+            // Eliminates ternary using Optional.of().filter() for division-by-zero protection
+            return Optional.of(total)
+                .filter(t -> t > 0)
+                .map(t -> (double) totalLatency.get() / t)
+                .orElse(0.0);
         }
-        
+
         public double getErrorRate() {
             long total = totalOrders.get();
-            return total > 0 ? (double) errorCount.get() / total : 0.0;
+            // Eliminates ternary using Optional.of().filter() for division-by-zero protection
+            return Optional.of(total)
+                .filter(t -> t > 0)
+                .map(t -> (double) errorCount.get() / t)
+                .orElse(0.0);
         }
         
         public long getLastUpdateTime() { return lastUpdateTime; }
@@ -612,32 +730,41 @@ public class MultiBrokerAggregationService {
         return Math.max(100, Math.min(2000, totalQuantity / 10));
     }
     
+    /**
+     * Update broker performance metrics - eliminates for loop with Stream API
+     */
     private void updateBrokerPerformanceMetrics(List<OrderResponse> responses, String correlationId) {
-        for (OrderResponse response : responses) {
-            BrokerPerformanceMetrics metrics = brokerMetrics.computeIfAbsent(
-                response.brokerName(), k -> new BrokerPerformanceMetrics());
-            
-            boolean success = response.status() == OrderStatus.ACKNOWLEDGED || 
-                             response.status() == OrderStatus.FILLED;
-            long latency = 100 + (long) (Math.random() * 200); // Mock latency
-            
-            metrics.recordExecution(success, latency);
-        }
+        // Eliminate for loop with Stream API - functional side-effect processing
+        responses.stream()
+            .forEach(response -> {
+                BrokerPerformanceMetrics metrics = brokerMetrics.computeIfAbsent(
+                    response.brokerName(), k -> new BrokerPerformanceMetrics());
+
+                boolean success = response.status() == OrderStatus.ACKNOWLEDGED ||
+                                 response.status() == OrderStatus.FILLED;
+                long latency = 100 + (long) (Math.random() * 200); // Mock latency
+
+                metrics.recordExecution(success, latency);
+            });
     }
     
-    private void recordAggregationMetrics(List<OrderResponse> responses, 
+    /**
+     * Record aggregation metrics - eliminates for loop with Stream API
+     */
+    private void recordAggregationMetrics(List<OrderResponse> responses,
                                         MultiBrokerOrderContext context, String correlationId) {
         // Record multi-broker aggregation metrics
         metricsService.recordOrderPlaced("MULTI_BROKER", context.getOrderRequest().getEstimatedOrderValue());
-        
-        for (OrderResponse response : responses) {
-            metricsService.recordOrderExecuted(response.brokerName(), BigDecimal.valueOf(response.quantity()));
-        }
-        
+
+        // Eliminate for loop with Stream API - functional side-effect for metrics recording
+        responses.stream()
+            .forEach(response ->
+                metricsService.recordOrderExecuted(response.brokerName(), BigDecimal.valueOf(response.quantity())));
+
         // Log aggregation summary
-        loggingService.logAuditEvent(correlationId, context.getUserId(), 
-            "MULTI_BROKER_AGGREGATION", 
-            String.format("Executed order across %d brokers using %s strategy", 
+        loggingService.logAuditEvent(correlationId, context.getUserId(),
+            "MULTI_BROKER_AGGREGATION",
+            String.format("Executed order across %d brokers using %s strategy",
                 responses.size(), context.getStrategy()));
     }
 }

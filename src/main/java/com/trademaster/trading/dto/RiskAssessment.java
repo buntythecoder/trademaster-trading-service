@@ -9,6 +9,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Risk Assessment DTO
@@ -243,7 +244,10 @@ public class RiskAssessment {
      * Get overall risk score as percentage
      */
     public BigDecimal getRiskScorePercent() {
-        return riskScore != null ? riskScore.multiply(BigDecimal.valueOf(100)) : BigDecimal.ZERO;
+        // Eliminates ternary operator using Optional.ofNullable().map().orElse()
+        return Optional.ofNullable(riskScore)
+            .map(score -> score.multiply(BigDecimal.valueOf(100)))
+            .orElse(BigDecimal.ZERO);
     }
     
     /**
@@ -277,17 +281,22 @@ public class RiskAssessment {
      * Get critical risk factors
      */
     public List<String> getCriticalRiskFactors() {
-        return warnings != null ? warnings.stream()
-            .filter(w -> w.contains("CRITICAL"))
-            .toList() : List.of();
+        // Eliminates ternary operator using Optional.ofNullable().map().orElse()
+        return Optional.ofNullable(warnings)
+            .map(w -> w.stream()
+                .filter(warning -> warning.contains("CRITICAL"))
+                .toList())
+            .orElse(List.of());
     }
     
     /**
      * Get total processing time
      */
     public Long getTotalProcessingTime() {
-        if (performance == null) return 0L;
-        return performance.getAssessmentDurationMs();
+        // Eliminates if-statement using Optional.ofNullable().map().orElse()
+        return Optional.ofNullable(performance)
+            .map(PerformanceMetrics::getAssessmentDurationMs)
+            .orElse(0L);
     }
     
     /**
@@ -302,14 +311,15 @@ public class RiskAssessment {
      * Get risk assessment summary
      */
     public Map<String, Object> getSummary() {
+        // Eliminates ternary operators using Optional.ofNullable().orElse() and .map().orElse()
         return Map.of(
-            "riskLevel", riskLevel != null ? riskLevel : "UNKNOWN",
+            "riskLevel", Optional.ofNullable(riskLevel).orElse("UNKNOWN"),
             "riskScore", getRiskScorePercent(),
             "approved", isApproved(),
             "processingTime", getTotalProcessingTime(),
             "withinSLA", withinSLA(),
             "hasViolations", hasRegulatoryViolations(),
-            "warningsCount", warnings != null ? warnings.size() : 0
+            "warningsCount", Optional.ofNullable(warnings).map(List::size).orElse(0)
         );
     }
     

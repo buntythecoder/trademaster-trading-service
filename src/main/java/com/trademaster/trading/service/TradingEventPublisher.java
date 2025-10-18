@@ -184,6 +184,7 @@ public class TradingEventPublisher {
      * ✅ FUNCTIONAL: Create order payload from Order entity
      */
     private Map<String, Object> createOrderPayload(Order order) {
+        // Eliminates ternary using Optional.ofNullable().orElse()
         return Map.of(
             "orderId", order.getOrderId(),
             "userId", order.getUserId().toString(),
@@ -194,7 +195,7 @@ public class TradingEventPublisher {
             "price", order.getLimitPrice(),
             "status", order.getStatus().toString(),
             "timestamp", order.getCreatedAt().toString(),
-            "brokerOrderId", order.getBrokerOrderId() != null ? order.getBrokerOrderId() : ""
+            "brokerOrderId", Optional.ofNullable(order.getBrokerOrderId()).orElse("")
         );
     }
     
@@ -205,15 +206,16 @@ public class TradingEventPublisher {
         try {
             kafkaTemplate.send(topic, key, event)
                 .whenComplete((result, exception) -> {
-                    if (exception != null) {
-                        log.error("Failed to publish event to Kafka: topic={}, key={}, error={}", 
-                            topic, key, exception.getMessage());
-                    } else {
-                        log.debug("Successfully published event to Kafka: topic={}, key={}", topic, key);
-                    }
+                    // Eliminates if-else using Optional.ofNullable().ifPresentOrElse()
+                    Optional.ofNullable(exception)
+                        .ifPresentOrElse(
+                            ex -> log.error("Failed to publish event to Kafka: topic={}, key={}, error={}",
+                                topic, key, ex.getMessage()),
+                            () -> log.debug("Successfully published event to Kafka: topic={}, key={}", topic, key)
+                        );
                 });
         } catch (Exception e) {
-            log.error("Error publishing event to Kafka: topic={}, key={}, error={}", 
+            log.error("Error publishing event to Kafka: topic={}, key={}, error={}",
                 topic, key, e.getMessage());
         }
     }

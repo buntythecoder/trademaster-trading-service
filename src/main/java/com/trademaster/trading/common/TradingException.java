@@ -2,6 +2,7 @@ package com.trademaster.trading.common;
 
 import java.time.Instant;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Trading Exception
@@ -34,7 +35,7 @@ public class TradingException extends RuntimeException {
         this(message, null, errorCode, orderId, symbol, userId, ErrorSeverity.MEDIUM, null);
     }
     
-    public TradingException(String message, Throwable cause, String errorCode, String orderId, 
+    public TradingException(String message, Throwable cause, String errorCode, String orderId,
                           String symbol, Long userId, ErrorSeverity severity, Map<String, Object> context) {
         super(message, cause);
         this.errorCode = errorCode;
@@ -43,7 +44,7 @@ public class TradingException extends RuntimeException {
         this.userId = userId;
         this.timestamp = Instant.now();
         this.context = context;
-        this.severity = severity != null ? severity : ErrorSeverity.MEDIUM;
+        this.severity = Optional.ofNullable(severity).orElse(ErrorSeverity.MEDIUM);
     }
     
     public String getErrorCode() {
@@ -89,26 +90,23 @@ public class TradingException extends RuntimeException {
     
     /**
      * Get formatted error message with context
+     * Uses Optional to eliminate if-statements
      */
     public String getFormattedMessage() {
         StringBuilder sb = new StringBuilder(getMessage());
-        
-        if (errorCode != null) {
-            sb.append(" [").append(errorCode).append("]");
-        }
-        
-        if (orderId != null) {
-            sb.append(" Order: ").append(orderId);
-        }
-        
-        if (symbol != null) {
-            sb.append(" Symbol: ").append(symbol);
-        }
-        
-        if (userId != null) {
-            sb.append(" User: ").append(userId);
-        }
-        
+
+        Optional.ofNullable(errorCode)
+            .ifPresent(code -> sb.append(" [").append(code).append("]"));
+
+        Optional.ofNullable(orderId)
+            .ifPresent(id -> sb.append(" Order: ").append(id));
+
+        Optional.ofNullable(symbol)
+            .ifPresent(sym -> sb.append(" Symbol: ").append(sym));
+
+        Optional.ofNullable(userId)
+            .ifPresent(user -> sb.append(" User: ").append(user));
+
         return sb.toString();
     }
     

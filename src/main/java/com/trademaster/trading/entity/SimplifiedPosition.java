@@ -12,6 +12,7 @@ import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.Optional;
 
 /**
  * Simplified Position Entity (Aligned with Migration Schema)
@@ -150,46 +151,51 @@ public class SimplifiedPosition {
     
     /**
      * Calculate current profit/loss
+     * Uses Optional to eliminate if-statement and ternary operators
      */
     public BigDecimal calculateCurrentPnL() {
-        if (unrealizedPnl == null && realizedPnl == null) {
-            return BigDecimal.ZERO;
-        }
-        
-        BigDecimal unrealized = unrealizedPnl != null ? unrealizedPnl : BigDecimal.ZERO;
-        BigDecimal realized = realizedPnl != null ? realizedPnl : BigDecimal.ZERO;
-        
+        // Use Optional to safely handle null values and combine unrealized + realized P&L
+        BigDecimal unrealized = Optional.ofNullable(unrealizedPnl).orElse(BigDecimal.ZERO);
+        BigDecimal realized = Optional.ofNullable(realizedPnl).orElse(BigDecimal.ZERO);
+
         return unrealized.add(realized);
     }
     
     /**
      * Calculate position value based on current price
+     * Uses Optional to eliminate if-statement and ternary operator
      */
     public BigDecimal calculatePositionValue() {
-        if (quantity == null || lastPrice == null) {
-            return marketValue != null ? marketValue : BigDecimal.ZERO;
-        }
-        
-        return lastPrice.multiply(new BigDecimal(Math.abs(quantity)));
+        return Optional.ofNullable(quantity)
+            .flatMap(qty -> Optional.ofNullable(lastPrice)
+                .map(price -> price.multiply(new BigDecimal(Math.abs(qty)))))
+            .orElseGet(() -> Optional.ofNullable(marketValue).orElse(BigDecimal.ZERO));
     }
     
     /**
      * Update market value and unrealized P&L based on current price
+     * Uses Optional to eliminate if-statement and ternary operator
      */
     public void updateMarketValue(BigDecimal currentPrice) {
-        if (currentPrice == null || quantity == null || avgPrice == null) {
-            return;
-        }
-        
-        this.lastPrice = currentPrice;
-        this.marketValue = currentPrice.multiply(new BigDecimal(Math.abs(quantity)));
-        
-        // Calculate unrealized P&L
-        BigDecimal costBasis = avgPrice.multiply(new BigDecimal(Math.abs(quantity)));
-        this.unrealizedPnl = isLong() ? 
-            marketValue.subtract(costBasis) : 
-            costBasis.subtract(marketValue);
-        
-        this.lastUpdated = Instant.now();
+        // Use Optional to handle null checks and perform updates only when all values are present
+        Optional.ofNullable(currentPrice)
+            .flatMap(price -> Optional.ofNullable(quantity)
+                .flatMap(qty -> Optional.ofNullable(avgPrice)
+                    .map(avg -> {
+                        this.lastPrice = price;
+                        this.marketValue = price.multiply(new BigDecimal(Math.abs(qty)));
+
+                        // Calculate unrealized P&L - eliminates ternary operator with Optional
+                        BigDecimal costBasis = avg.multiply(new BigDecimal(Math.abs(qty)));
+                        this.unrealizedPnl = Optional.of(isLong())
+                            .filter(isLongPosition -> isLongPosition)
+                            .map(isLongPosition -> marketValue.subtract(costBasis))
+                            .orElse(costBasis.subtract(marketValue));
+
+                        this.lastUpdated = Instant.now();
+                        return true;
+                    })
+                )
+            );
     }
 }

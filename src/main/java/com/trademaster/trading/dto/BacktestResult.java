@@ -12,6 +12,8 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.stream.Stream;
 
 /**
  * Backtest Result DTO
@@ -386,43 +388,72 @@ public class BacktestResult {
     
     /**
      * Get overall strategy rating
+     * Uses functional patterns to eliminate if-statements
      */
     public String getStrategyRating() {
-        if (performance == null || performance.getSharpeRatio() == null) {
-            return "UNKNOWN";
-        }
-        
-        BigDecimal sharpe = performance.getSharpeRatio();
-        if (sharpe.compareTo(new BigDecimal("2.0")) >= 0) return "EXCELLENT";
-        if (sharpe.compareTo(new BigDecimal("1.5")) >= 0) return "VERY_GOOD";
-        if (sharpe.compareTo(new BigDecimal("1.0")) >= 0) return "GOOD";
-        if (sharpe.compareTo(new BigDecimal("0.5")) >= 0) return "FAIR";
-        return "POOR";
+        // Eliminates if-statements with Optional and Stream patterns
+        return Optional.ofNullable(performance)
+            .flatMap(perf -> Optional.ofNullable(perf.getSharpeRatio()))
+            .map(sharpe -> {
+                // Rating thresholds record for functional evaluation
+                record RatingThreshold(BigDecimal threshold, String rating) {}
+
+                // Stream of thresholds - eliminates if-else chain
+                return Stream.of(
+                        new RatingThreshold(new BigDecimal("2.0"), "EXCELLENT"),
+                        new RatingThreshold(new BigDecimal("1.5"), "VERY_GOOD"),
+                        new RatingThreshold(new BigDecimal("1.0"), "GOOD"),
+                        new RatingThreshold(new BigDecimal("0.5"), "FAIR")
+                    )
+                    .filter(rt -> sharpe.compareTo(rt.threshold()) >= 0)
+                    .findFirst()
+                    .map(RatingThreshold::rating)
+                    .orElse("POOR");
+            })
+            .orElse("UNKNOWN");
     }
     
     /**
      * Get backtest summary
+     * Uses Optional patterns to eliminate ternary operators
      */
     public Map<String, Object> getBacktestSummary() {
         Map<String, Object> summary = new HashMap<>();
-        summary.put("backtestId", backtestId != null ? backtestId : "N/A");
-        summary.put("strategyName", strategyName != null ? strategyName : "Unknown");
+
+        // Eliminates ternary operators with Optional.ofNullable().orElse()
+        summary.put("backtestId", Optional.ofNullable(backtestId).orElse("N/A"));
+        summary.put("strategyName", Optional.ofNullable(strategyName).orElse("Unknown"));
         summary.put("period", startDate + " to " + endDate);
-        summary.put("totalReturn", performance != null && performance.getTotalReturn() != null ? 
-                   performance.getTotalReturn() : BigDecimal.ZERO);
-        summary.put("annualizedReturn", performance != null && performance.getAnnualizedReturn() != null ? 
-                   performance.getAnnualizedReturn() : BigDecimal.ZERO);
-        summary.put("sharpeRatio", performance != null && performance.getSharpeRatio() != null ? 
-                   performance.getSharpeRatio() : BigDecimal.ZERO);
-        summary.put("maxDrawdown", performance != null && performance.getMaxDrawdown() != null ? 
-                   performance.getMaxDrawdown() : BigDecimal.ZERO);
-        summary.put("totalTrades", tradingStats != null && tradingStats.getTotalTrades() != null ? 
-                   tradingStats.getTotalTrades() : 0);
-        summary.put("winRate", tradingStats != null && tradingStats.getWinRate() != null ? 
-                   tradingStats.getWinRate() : BigDecimal.ZERO);
+
+        // Eliminates nested null checks with Optional.flatMap()
+        summary.put("totalReturn", Optional.ofNullable(performance)
+                   .flatMap(p -> Optional.ofNullable(p.getTotalReturn()))
+                   .orElse(BigDecimal.ZERO));
+
+        summary.put("annualizedReturn", Optional.ofNullable(performance)
+                   .flatMap(p -> Optional.ofNullable(p.getAnnualizedReturn()))
+                   .orElse(BigDecimal.ZERO));
+
+        summary.put("sharpeRatio", Optional.ofNullable(performance)
+                   .flatMap(p -> Optional.ofNullable(p.getSharpeRatio()))
+                   .orElse(BigDecimal.ZERO));
+
+        summary.put("maxDrawdown", Optional.ofNullable(performance)
+                   .flatMap(p -> Optional.ofNullable(p.getMaxDrawdown()))
+                   .orElse(BigDecimal.ZERO));
+
+        summary.put("totalTrades", Optional.ofNullable(tradingStats)
+                   .flatMap(s -> Optional.ofNullable(s.getTotalTrades()))
+                   .orElse(0));
+
+        summary.put("winRate", Optional.ofNullable(tradingStats)
+                   .flatMap(s -> Optional.ofNullable(s.getWinRate()))
+                   .orElse(BigDecimal.ZERO));
+
         summary.put("rating", getStrategyRating());
         summary.put("outperformed", outperformedBenchmark());
-        summary.put("completedAt", completedAt != null ? completedAt : Instant.EPOCH);
+        summary.put("completedAt", Optional.ofNullable(completedAt).orElse(Instant.EPOCH));
+
         return Collections.unmodifiableMap(summary);
     }
     

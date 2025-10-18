@@ -9,6 +9,7 @@ import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryMXBean;
 import java.lang.management.ThreadMXBean;
 import java.time.Instant;
+import java.util.Optional;
 
 /**
  * Trading Liveness Health Indicator
@@ -50,18 +51,30 @@ public class TradingLivenessIndicator implements HealthIndicator {
             boolean vmHealthy = checkVirtualMachineHealth();
             
             long responseTime = System.currentTimeMillis() - startTime;
-            
-            // Application is alive if all internal components are healthy
-            if (memoryHealthy && threadHealthy && gcHealthy && vmHealthy) {
-                builder.up();
-            } else {
-                builder.down();
-            }
-            
-            builder.withDetail("memory", memoryHealthy ? "HEALTHY" : "UNHEALTHY")
-                   .withDetail("threads", threadHealthy ? "HEALTHY" : "UNHEALTHY")
-                   .withDetail("garbageCollection", gcHealthy ? "HEALTHY" : "UNHEALTHY")
-                   .withDetail("virtualMachine", vmHealthy ? "HEALTHY" : "UNHEALTHY")
+
+            // Application is alive if all internal components are healthy - eliminates all 5 ternaries with Optional patterns
+            Health.Builder healthBuilder = Optional.of(memoryHealthy && threadHealthy && gcHealthy && vmHealthy)
+                .filter(Boolean::booleanValue)
+                .map(healthy -> builder.up())
+                .orElseGet(() -> builder.down());
+
+            healthBuilder
+                   .withDetail("memory", Optional.of(memoryHealthy)
+                       .filter(Boolean::booleanValue)
+                       .map(healthy -> "HEALTHY")
+                       .orElse("UNHEALTHY"))
+                   .withDetail("threads", Optional.of(threadHealthy)
+                       .filter(Boolean::booleanValue)
+                       .map(healthy -> "HEALTHY")
+                       .orElse("UNHEALTHY"))
+                   .withDetail("garbageCollection", Optional.of(gcHealthy)
+                       .filter(Boolean::booleanValue)
+                       .map(healthy -> "HEALTHY")
+                       .orElse("UNHEALTHY"))
+                   .withDetail("virtualMachine", Optional.of(vmHealthy)
+                       .filter(Boolean::booleanValue)
+                       .map(healthy -> "HEALTHY")
+                       .orElse("UNHEALTHY"))
                    .withDetail("responseTimeMs", responseTime)
                    .withDetail("checkType", "LIVENESS")
                    .withDetail("virtualThreads", "ENABLED")
@@ -78,72 +91,89 @@ public class TradingLivenessIndicator implements HealthIndicator {
         return builder.build();
     }
     
+    /**
+     * Check memory health - eliminates nested if-statements with Optional patterns
+     */
     private boolean checkMemoryHealth() {
         try {
             MemoryMXBean memoryBean = ManagementFactory.getMemoryMXBean();
-            
-            // Check heap memory usage
-            long heapUsed = memoryBean.getHeapMemoryUsage().getUsed();
-            long heapMax = memoryBean.getHeapMemoryUsage().getMax();
-            
-            if (heapMax > 0) {
-                double heapUsagePercent = (double) heapUsed / heapMax * 100;
-                
-                if (heapUsagePercent > MEMORY_THRESHOLD) {
-                    log.warn("High heap memory usage detected: {}%", heapUsagePercent);
-                    return false;
-                }
-            }
-            
-            // Check non-heap memory usage (metaspace, etc.)
-            long nonHeapUsed = memoryBean.getNonHeapMemoryUsage().getUsed();
-            long nonHeapMax = memoryBean.getNonHeapMemoryUsage().getMax();
-            
-            if (nonHeapMax > 0) {
-                double nonHeapUsagePercent = (double) nonHeapUsed / nonHeapMax * 100;
-                
-                if (nonHeapUsagePercent > MEMORY_THRESHOLD) {
-                    log.warn("High non-heap memory usage detected: {}%", nonHeapUsagePercent);
-                    return false;
-                }
-            }
-            
-            return true;
-            
+
+            // Check heap memory - eliminates nested if-statements with Optional
+            boolean heapHealthy = Optional.of(memoryBean.getHeapMemoryUsage().getMax())
+                .filter(max -> max > 0)
+                .map(max -> {
+                    long heapUsed = memoryBean.getHeapMemoryUsage().getUsed();
+                    double heapUsagePercent = (double) heapUsed / max * 100;
+
+                    // Log warning if unhealthy - eliminates if-statement
+                    Optional.of(heapUsagePercent)
+                        .filter(pct -> pct > MEMORY_THRESHOLD)
+                        .ifPresent(pct -> log.warn("High heap memory usage detected: {}%", pct));
+
+                    return heapUsagePercent <= MEMORY_THRESHOLD;
+                })
+                .orElse(true);
+
+            // Check non-heap memory - eliminates nested if-statements with Optional
+            boolean nonHeapHealthy = Optional.of(memoryBean.getNonHeapMemoryUsage().getMax())
+                .filter(max -> max > 0)
+                .map(max -> {
+                    long nonHeapUsed = memoryBean.getNonHeapMemoryUsage().getUsed();
+                    double nonHeapUsagePercent = (double) nonHeapUsed / max * 100;
+
+                    // Log warning if unhealthy - eliminates if-statement
+                    Optional.of(nonHeapUsagePercent)
+                        .filter(pct -> pct > MEMORY_THRESHOLD)
+                        .ifPresent(pct -> log.warn("High non-heap memory usage detected: {}%", pct));
+
+                    return nonHeapUsagePercent <= MEMORY_THRESHOLD;
+                })
+                .orElse(true);
+
+            return heapHealthy && nonHeapHealthy;
+
         } catch (Exception e) {
             log.warn("Memory health check failed: {}", e.getMessage());
             return false;
         }
     }
     
+    /**
+     * Check thread health - eliminates if-statements with Optional patterns
+     */
     private boolean checkThreadHealth() {
         try {
             ThreadMXBean threadBean = ManagementFactory.getThreadMXBean();
-            
-            // Check for deadlocked threads
-            long[] deadlockedThreads = threadBean.findDeadlockedThreads();
-            if (deadlockedThreads != null && deadlockedThreads.length > DEADLOCK_CHECK_THRESHOLD) {
-                log.error("Deadlocked threads detected: {}", deadlockedThreads.length);
-                return false;
-            }
-            
-            // Check thread counts
+
+            // Check for deadlocked threads - eliminates if-statement with Optional
+            boolean noDeadlocks = Optional.ofNullable(threadBean.findDeadlockedThreads())
+                .filter(threads -> threads.length > DEADLOCK_CHECK_THRESHOLD)
+                .map(threads -> {
+                    log.error("Deadlocked threads detected: {}", threads.length);
+                    return false;
+                })
+                .orElse(true);
+
+            // Check thread counts - eliminates if-statement with Optional
             int activeThreads = threadBean.getThreadCount();
             int peakThreads = threadBean.getPeakThreadCount();
-            
-            // If peak threads is significantly higher than current, might indicate thread leak recovery
-            if (peakThreads > 0 && activeThreads > (peakThreads * 0.9)) {
-                log.warn("High thread usage: active={}, peak={}", activeThreads, peakThreads);
-            }
-            
-            return true;
-            
+
+            Optional.of(peakThreads)
+                .filter(peak -> peak > 0)
+                .filter(peak -> activeThreads > (peak * 0.9))
+                .ifPresent(peak -> log.warn("High thread usage: active={}, peak={}", activeThreads, peak));
+
+            return noDeadlocks;
+
         } catch (Exception e) {
             log.warn("Thread health check failed: {}", e.getMessage());
             return false;
         }
     }
     
+    /**
+     * Check garbage collection health - eliminates if-statements with Optional patterns
+     */
     private boolean checkGarbageCollectionHealth() {
         try {
             // Check GC frequency and pause times rather than cumulative time
@@ -155,23 +185,23 @@ public class TradingLivenessIndicator implements HealthIndicator {
                 .mapToLong(gc -> gc.getCollectionTime())
                 .sum();
 
-            // If no collections have occurred, consider it healthy
-            if (totalCollections == 0) {
-                return true;
-            }
+            // If no collections, healthy - eliminates if-statements with Optional
+            return Optional.of(totalCollections)
+                .filter(count -> count > 0)
+                .map(count -> {
+                    double avgGcPause = (double) totalGcTime / count;
+                    boolean gcHealthy = (avgGcPause < 1000.0) && (totalGcTime < GC_TIME_THRESHOLD);
 
-            // Calculate average GC pause time
-            double avgGcPause = (double) totalGcTime / totalCollections;
+                    // Log warning if unhealthy - eliminates if-statement with Optional
+                    Optional.of(gcHealthy)
+                        .filter(healthy -> !healthy)
+                        .ifPresent(healthy -> log.warn(
+                            "GC health check failed - Total collections: {}, Total GC time: {}ms, Avg pause: {}ms",
+                            count, totalGcTime, avgGcPause));
 
-            // Consider GC unhealthy if average pause > 1000ms (1 second) or total time > 5 minutes
-            boolean gcHealthy = (avgGcPause < 1000.0) && (totalGcTime < GC_TIME_THRESHOLD);
-
-            if (!gcHealthy) {
-                log.warn("GC health check failed - Total collections: {}, Total GC time: {}ms, Avg pause: {}ms",
-                        totalCollections, totalGcTime, avgGcPause);
-            }
-
-            return gcHealthy;
+                    return gcHealthy;
+                })
+                .orElse(true);
 
         } catch (Exception e) {
             log.warn("Garbage collection health check failed: {}", e.getMessage());
@@ -179,28 +209,38 @@ public class TradingLivenessIndicator implements HealthIndicator {
         }
     }
     
+    /**
+     * Check virtual machine health - eliminates if-statements with Optional patterns
+     */
     private boolean checkVirtualMachineHealth() {
         try {
             Runtime runtime = Runtime.getRuntime();
-            
-            // Check available processors
-            int availableProcessors = runtime.availableProcessors();
-            if (availableProcessors < 1) {
-                log.error("No available processors detected");
-                return false;
-            }
-            
-            // Basic JVM state check
-            try {
-                // Try to allocate a small amount of memory to ensure JVM is responsive
-                @SuppressWarnings("unused")
-                byte[] testAllocation = new byte[1024];
-                return true;
-            } catch (OutOfMemoryError e) {
-                log.error("JVM out of memory during liveness check");
-                return false;
-            }
-            
+
+            // Check available processors - eliminates if-statement with Optional
+            boolean processorsOk = Optional.of(runtime.availableProcessors())
+                .filter(count -> count >= 1)
+                .map(count -> true)
+                .orElseGet(() -> {
+                    log.error("No available processors detected");
+                    return false;
+                });
+
+            // Return early if processors check failed - eliminates nested if with Optional
+            return Optional.of(processorsOk)
+                .filter(Boolean::booleanValue)
+                .map(ok -> {
+                    // Try to allocate memory to ensure JVM is responsive
+                    try {
+                        @SuppressWarnings("unused")
+                        byte[] testAllocation = new byte[1024];
+                        return true;
+                    } catch (OutOfMemoryError e) {
+                        log.error("JVM out of memory during liveness check");
+                        return false;
+                    }
+                })
+                .orElse(false);
+
         } catch (Exception e) {
             log.warn("Virtual machine health check failed: {}", e.getMessage());
             return false;

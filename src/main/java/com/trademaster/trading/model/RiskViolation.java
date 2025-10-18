@@ -7,6 +7,8 @@ import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.Optional;
+import java.util.stream.Stream;
 
 /**
  * Risk Violation Model
@@ -155,25 +157,25 @@ public class RiskViolation {
     }
     
     /**
-     * Get excess percentage
+     * Get excess percentage - eliminates if-statement with Optional
      */
     public BigDecimal getExcessPercent() {
-        if (currentValue == null || limitValue == null || 
-            limitValue.compareTo(BigDecimal.ZERO) == 0) {
-            return BigDecimal.ZERO;
-        }
-        
-        return currentValue.subtract(limitValue)
-               .divide(limitValue, 4, java.math.RoundingMode.HALF_UP)
-               .multiply(BigDecimal.valueOf(100));
+        return Optional.ofNullable(currentValue)
+            .flatMap(current -> Optional.ofNullable(limitValue)
+                .filter(limit -> limit.compareTo(BigDecimal.ZERO) != 0)
+                .map(limit -> current.subtract(limit)
+                    .divide(limit, 4, java.math.RoundingMode.HALF_UP)
+                    .multiply(BigDecimal.valueOf(100))))
+            .orElse(BigDecimal.ZERO);
     }
     
     /**
-     * Calculate age of violation
+     * Calculate age of violation - eliminates if-statement with Optional
      */
     public long getAgeMinutes() {
-        if (detectedAt == null) return 0;
-        return java.time.Duration.between(detectedAt, Instant.now()).toMinutes();
+        return Optional.ofNullable(detectedAt)
+            .map(detected -> java.time.Duration.between(detected, Instant.now()).toMinutes())
+            .orElse(0L);
     }
     
     /**
@@ -213,41 +215,49 @@ public class RiskViolation {
     }
     
     /**
-     * Get violation priority score (higher = more urgent)
+     * Get violation priority score (higher = more urgent) - eliminates if-else chain with Stream pattern
      */
     public int getPriorityScore() {
-        int score = 0;
-        
-        // Severity contribution
-        if ("CRITICAL".equals(severity)) score += 100;
-        else if ("HIGH".equals(severity)) score += 75;
-        else if ("MEDIUM".equals(severity)) score += 50;
-        else if ("LOW".equals(severity)) score += 25;
-        
-        // Risk score contribution
-        if (riskScore != null) {
-            score += riskScore.multiply(BigDecimal.valueOf(50)).intValue();
-        }
-        
+        // Severity contribution - eliminates if-else chain with Stream pattern
+        record SeverityScore(String severity, int score) {}
+        int severityScore = Stream.of(
+                new SeverityScore("CRITICAL", 100),
+                new SeverityScore("HIGH", 75),
+                new SeverityScore("MEDIUM", 50),
+                new SeverityScore("LOW", 25)
+            )
+            .filter(ss -> ss.severity().equals(severity))
+            .findFirst()
+            .map(SeverityScore::score)
+            .orElse(0);
+
+        // Risk score contribution - eliminates if-statement with Optional
+        int riskContribution = Optional.ofNullable(riskScore)
+            .map(rs -> rs.multiply(BigDecimal.valueOf(50)).intValue())
+            .orElse(0);
+
         // Age penalty (older violations get higher priority)
-        score += (int) Math.min(getAgeMinutes(), 60); // Max 60 points for age
-        
-        // Blocking violations get priority boost
-        if (isBlocking()) score += 50;
-        
-        return score;
+        int ageScore = (int) Math.min(getAgeMinutes(), 60); // Max 60 points for age
+
+        // Blocking violations get priority boost - eliminates if-statement with Optional
+        int blockingBoost = Optional.of(isBlocking())
+            .filter(blocking -> blocking)
+            .map(blocking -> 50)
+            .orElse(0);
+
+        return severityScore + riskContribution + ageScore + blockingBoost;
     }
     
     /**
-     * Get violation summary for logging
+     * Get violation summary for logging - eliminates ternaries with Optional
      */
     public String getSummary() {
         return String.format("[%s] %s - %s (Current: %s, Limit: %s, Excess: %s%%)",
             severity,
             violationType,
             description,
-            currentValue != null ? currentValue.toString() : "N/A",
-            limitValue != null ? limitValue.toString() : "N/A",
+            Optional.ofNullable(currentValue).map(BigDecimal::toString).orElse("N/A"),
+            Optional.ofNullable(limitValue).map(BigDecimal::toString).orElse("N/A"),
             getExcessPercent().toString());
     }
     

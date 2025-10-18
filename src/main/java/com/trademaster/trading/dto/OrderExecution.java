@@ -9,6 +9,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Order Execution DTO
@@ -297,99 +298,99 @@ public class OrderExecution {
     }
     
     /**
-     * Get fill rate percentage
+     * Get fill rate percentage - eliminates if-statement and ternary with Optional
      */
     public BigDecimal getFillRate() {
-        if (originalQuantity == null || originalQuantity == 0) {
-            return BigDecimal.ZERO;
-        }
-        Integer executed = executedQuantity != null ? executedQuantity : 0;
-        return BigDecimal.valueOf(executed)
-               .divide(BigDecimal.valueOf(originalQuantity), 4, java.math.RoundingMode.HALF_UP)
-               .multiply(BigDecimal.valueOf(100));
+        return Optional.ofNullable(originalQuantity)
+            .filter(qty -> qty != 0)
+            .map(original -> {
+                Integer executed = Optional.ofNullable(executedQuantity).orElse(0);
+                return BigDecimal.valueOf(executed)
+                    .divide(BigDecimal.valueOf(original), 4, java.math.RoundingMode.HALF_UP)
+                    .multiply(BigDecimal.valueOf(100));
+            })
+            .orElse(BigDecimal.ZERO);
     }
     
     /**
-     * Get total execution time in milliseconds
+     * Get total execution time in milliseconds - eliminates if-statement with Optional
      */
     public Long getExecutionTimeMs() {
-        if (orderCreated == null || executionCompleted == null) {
-            return null;
-        }
-        return java.time.Duration.between(orderCreated, executionCompleted).toMillis();
+        return Optional.ofNullable(orderCreated)
+            .flatMap(created -> Optional.ofNullable(executionCompleted)
+                .map(completed -> java.time.Duration.between(created, completed).toMillis()))
+            .orElse(null);
     }
     
     /**
-     * Get average fill price
+     * Get average fill price - eliminates if-statements and for loop with Optional and Stream
      */
     public BigDecimal getAverageFillPrice() {
-        if (fills == null || fills.isEmpty()) {
-            return averagePrice;
-        }
-        
-        BigDecimal totalValue = BigDecimal.ZERO;
-        Integer totalQuantity = 0;
-        
-        for (ExecutionFill fill : fills) {
-            totalValue = totalValue.add(fill.getFillPrice().multiply(BigDecimal.valueOf(fill.getFillQuantity())));
-            totalQuantity += fill.getFillQuantity();
-        }
-        
-        if (totalQuantity == 0) {
-            return BigDecimal.ZERO;
-        }
-        
-        return totalValue.divide(BigDecimal.valueOf(totalQuantity), 4, java.math.RoundingMode.HALF_UP);
+        return Optional.ofNullable(fills)
+            .filter(f -> !f.isEmpty())
+            .map(fillList -> {
+                BigDecimal totalValue = fillList.stream()
+                    .map(fill -> fill.getFillPrice().multiply(BigDecimal.valueOf(fill.getFillQuantity())))
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+                Integer totalQuantity = fillList.stream()
+                    .map(ExecutionFill::getFillQuantity)
+                    .reduce(0, Integer::sum);
+
+                return Optional.of(totalQuantity)
+                    .filter(qty -> qty != 0)
+                    .map(qty -> totalValue.divide(BigDecimal.valueOf(qty), 4, java.math.RoundingMode.HALF_UP))
+                    .orElse(BigDecimal.ZERO);
+            })
+            .orElse(averagePrice);
     }
     
     /**
-     * Get total commission and fees
+     * Get total commission and fees - eliminates if-statement with Optional
      */
     public BigDecimal getTotalCommission() {
-        if (fills == null || fills.isEmpty()) {
-            return BigDecimal.ZERO;
-        }
-        
-        return fills.stream()
-               .filter(fill -> fill.getCommission() != null)
-               .map(ExecutionFill::getCommission)
-               .reduce(BigDecimal.ZERO, BigDecimal::add);
+        return Optional.ofNullable(fills)
+            .filter(f -> !f.isEmpty())
+            .map(fillList -> fillList.stream()
+                .filter(fill -> fill.getCommission() != null)
+                .map(ExecutionFill::getCommission)
+                .reduce(BigDecimal.ZERO, BigDecimal::add))
+            .orElse(BigDecimal.ZERO);
     }
     
     /**
-     * Check if execution quality is good
+     * Check if execution quality is good - eliminates if-statement with Optional
      */
     public boolean hasGoodExecutionQuality() {
-        if (executionQuality == null || executionQuality.getQualityRating() == null) {
-            return false;
-        }
-        return "EXCELLENT".equals(executionQuality.getQualityRating()) || 
-               "GOOD".equals(executionQuality.getQualityRating());
+        return Optional.ofNullable(executionQuality)
+            .flatMap(quality -> Optional.ofNullable(quality.getQualityRating())
+                .map(rating -> "EXCELLENT".equals(rating) || "GOOD".equals(rating)))
+            .orElse(false);
     }
     
     /**
-     * Check if execution had high latency
+     * Check if execution had high latency - eliminates if-statement with Optional
      */
     public boolean hasHighLatency() {
-        if (latencyMetrics == null || latencyMetrics.getTotalExecutionLatency() == null) {
-            return false;
-        }
-        return latencyMetrics.getTotalExecutionLatency() > 1000L; // >1ms is high latency
+        return Optional.ofNullable(latencyMetrics)
+            .flatMap(metrics -> Optional.ofNullable(metrics.getTotalExecutionLatency())
+                .map(latency -> latency > 1000L)) // >1ms is high latency
+            .orElse(false);
     }
     
     /**
-     * Get execution summary for reporting
+     * Get execution summary for reporting - eliminates ternary operators with Optional
      */
     public Map<String, Object> getExecutionSummary() {
         Map<String, Object> summary = new java.util.HashMap<>();
-        summary.put("executionId", executionId != null ? executionId : "N/A");
-        summary.put("symbol", symbol != null ? symbol : "N/A");
-        summary.put("side", side != null ? side : "N/A");
-        summary.put("executedQuantity", executedQuantity != null ? executedQuantity : 0);
+        summary.put("executionId", Optional.ofNullable(executionId).orElse("N/A"));
+        summary.put("symbol", Optional.ofNullable(symbol).orElse("N/A"));
+        summary.put("side", Optional.ofNullable(side).orElse("N/A"));
+        summary.put("executedQuantity", Optional.ofNullable(executedQuantity).orElse(0));
         summary.put("averagePrice", getAverageFillPrice());
-        summary.put("totalValue", totalValue != null ? totalValue : BigDecimal.ZERO);
-        summary.put("executionStatus", executionStatus != null ? executionStatus : "UNKNOWN");
-        summary.put("venue", venue != null ? venue : "N/A");
+        summary.put("totalValue", Optional.ofNullable(totalValue).orElse(BigDecimal.ZERO));
+        summary.put("executionStatus", Optional.ofNullable(executionStatus).orElse("UNKNOWN"));
+        summary.put("venue", Optional.ofNullable(venue).orElse("N/A"));
         summary.put("fillRate", getFillRate());
         summary.put("executionTimeMs", getExecutionTimeMs());
         summary.put("isSuccessful", isSuccessful());

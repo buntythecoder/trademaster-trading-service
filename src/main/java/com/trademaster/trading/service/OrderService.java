@@ -4,7 +4,7 @@ import com.trademaster.trading.dto.OrderRequest;
 import com.trademaster.trading.dto.OrderResponse;
 import com.trademaster.trading.entity.Order;
 import com.trademaster.trading.model.OrderStatus;
-import com.trademaster.trading.common.Result;
+import com.trademaster.common.functional.Result;
 import com.trademaster.trading.common.TradeError;
 import org.springframework.data.domain.Pageable;
 

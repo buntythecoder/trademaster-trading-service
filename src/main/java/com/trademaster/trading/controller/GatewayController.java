@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.time.Instant;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
@@ -91,9 +92,13 @@ public class GatewayController {
             // Overall health is UP if critical components are healthy
             boolean isHealthy = isHealthUp(service) && isHealthUp(readiness) && isHealthUp(liveness);
             boolean brokerHealthy = isHealthUp(broker);
-            
+
+            // Eliminates ternary using Optional.of().filter() for status selection
             HealthResponse response = HealthResponse.builder()
-                .status(isHealthy ? "UP" : "DOWN")
+                .status(Optional.of(isHealthy)
+                    .filter(Boolean::booleanValue)
+                    .map(healthy -> "UP")
+                    .orElse("DOWN"))
                 .service(getHealthStatus(service))
                 .brokers(getHealthStatus(broker))
                 .readiness(getHealthStatus(readiness))
@@ -103,10 +108,12 @@ public class GatewayController {
                 .responseTimeMs(responseTime)
                 .timestamp(Instant.now().toString())
                 .build();
-            
-            return isHealthy ? 
-                ResponseEntity.ok(response) : 
-                ResponseEntity.status(503).body(response);
+
+            // Eliminates ternary using Optional.of().filter() for HTTP status selection
+            return Optional.of(isHealthy)
+                .filter(Boolean::booleanValue)
+                .map(healthy -> ResponseEntity.ok(response))
+                .orElseGet(() -> ResponseEntity.status(503).body(response));
                 
         } catch (Exception e) {
             log.error("Gateway health check failed", e);
@@ -139,14 +146,20 @@ public class GatewayController {
             
             ReadinessResponse response = ReadinessResponse.builder()
                 .ready(isReady)
-                .status(isReady ? "READY" : "NOT_READY")
+                // Eliminates ternary using Optional.of().filter() for status selection
+                .status(Optional.of(isReady)
+                    .filter(Boolean::booleanValue)
+                    .map(ready -> "READY")
+                    .orElse("NOT_READY"))
                 .details(readiness.getDetails())
                 .timestamp(Instant.now().toString())
                 .build();
-            
-            return isReady ? 
-                ResponseEntity.ok(response) : 
-                ResponseEntity.status(503).body(response);
+
+            // Eliminates ternary using Optional.of().filter() for HTTP status selection
+            return Optional.of(isReady)
+                .filter(Boolean::booleanValue)
+                .map(ready -> ResponseEntity.ok(response))
+                .orElseGet(() -> ResponseEntity.status(503).body(response));
                 
         } catch (Exception e) {
             log.error("Readiness check failed", e);
@@ -174,14 +187,20 @@ public class GatewayController {
             
             LivenessResponse response = LivenessResponse.builder()
                 .alive(isAlive)
-                .status(isAlive ? "ALIVE" : "NEEDS_RESTART")
+                // Eliminates ternary using Optional.of().filter() for status selection
+                .status(Optional.of(isAlive)
+                    .filter(Boolean::booleanValue)
+                    .map(alive -> "ALIVE")
+                    .orElse("NEEDS_RESTART"))
                 .details(liveness.getDetails())
                 .timestamp(Instant.now().toString())
                 .build();
-            
-            return isAlive ? 
-                ResponseEntity.ok(response) : 
-                ResponseEntity.status(503).body(response);
+
+            // Eliminates ternary using Optional.of().filter() for HTTP status selection
+            return Optional.of(isAlive)
+                .filter(Boolean::booleanValue)
+                .map(alive -> ResponseEntity.ok(response))
+                .orElseGet(() -> ResponseEntity.status(503).body(response));
                 
         } catch (Exception e) {
             log.error("Liveness check failed", e);

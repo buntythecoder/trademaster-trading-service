@@ -20,6 +20,7 @@ import org.springframework.http.client.HttpComponentsClientHttpRequestFactory;
 import org.springframework.web.client.RestTemplate;
 
 import java.time.Duration;
+import java.util.Optional;
 import java.util.concurrent.Executors;
 
 /**
@@ -177,10 +178,12 @@ public class HttpClientConfiguration {
             .build();
 
         // ✅ Add circuit breaker interceptor if available
-        if (circuitBreaker != null) {
-            log.info("🔄 Adding circuit breaker interceptor to Trading Service RestTemplate");
-            // Circuit breaker will be applied at service layer
-        }
+        // Eliminates if-statement using Optional.ofNullable().ifPresent()
+        Optional.ofNullable(circuitBreaker)
+            .ifPresent(cb -> {
+                log.info("🔄 Adding circuit breaker interceptor to Trading Service RestTemplate");
+                // Circuit breaker will be applied at service layer
+            });
 
         log.info("✅ Trading Service circuit breaker RestTemplate configured");
         return restTemplate;

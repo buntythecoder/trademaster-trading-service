@@ -10,6 +10,8 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.stream.Stream;
 
 /**
  * Order Execution Strategy
@@ -261,22 +263,34 @@ public class OrderExecutionStrategy {
         return alternatives != null && !alternatives.isEmpty();
     }
     
+    /**
+     * Get estimated time to completion - uses Optional to eliminate ternary
+     */
     public Duration getEstimatedTimeToCompletion() {
-        return expectedTimeToCompletion != null ? expectedTimeToCompletion : estimatedExecutionTime;
+        return Optional.ofNullable(expectedTimeToCompletion).orElse(estimatedExecutionTime);
     }
-    
+
+    /**
+     * Get total expected cost - uses Optional to eliminate ternary
+     */
     public BigDecimal getTotalExpectedCost() {
-        return totalEstimatedCost != null ? totalEstimatedCost : BigDecimal.ZERO;
+        return Optional.ofNullable(totalEstimatedCost).orElse(BigDecimal.ZERO);
     }
     
+    /**
+     * Get strategy complexity level - uses Stream pattern to eliminate if-else chain
+     */
     public String getStrategyComplexityLevel() {
-        if (isComplexStrategy()) {
-            return "HIGH";
-        } else if ("PATIENT".equals(strategyType)) {
-            return "MEDIUM";
-        } else {
-            return "LOW";
-        }
+        record ComplexityRule(java.util.function.Predicate<OrderExecutionStrategy> condition, String level) {}
+
+        return Stream.of(
+                new ComplexityRule(OrderExecutionStrategy::isComplexStrategy, "HIGH"),
+                new ComplexityRule(s -> "PATIENT".equals(s.strategyType), "MEDIUM")
+            )
+            .filter(rule -> rule.condition().test(this))
+            .findFirst()
+            .map(ComplexityRule::level)
+            .orElse("LOW");
     }
     
     public boolean shouldAdaptDuringExecution() {
@@ -286,24 +300,25 @@ public class OrderExecutionStrategy {
     
     /**
      * Calculate strategy score based on cost, risk, and confidence
+     * Uses Optional to eliminate if-statements and ternary operators
      */
     public BigDecimal calculateStrategyScore() {
-        BigDecimal costScore = BigDecimal.ONE;
-        if (totalEstimatedCost != null) {
-            // Lower cost = higher score (inverse relationship)
-            costScore = BigDecimal.ONE.subtract(
-                totalEstimatedCost.divide(new BigDecimal("1000"), 2, java.math.RoundingMode.HALF_UP)
-            ).max(BigDecimal.ZERO);
-        }
-        
-        BigDecimal riskScore = BigDecimal.ONE;
-        if (executionRisk != null) {
-            // Lower risk = higher score (inverse relationship)
-            riskScore = BigDecimal.ONE.subtract(executionRisk);
-        }
-        
-        BigDecimal confScore = confidenceScore != null ? confidenceScore : new BigDecimal("0.5");
-        
+        BigDecimal costScore = Optional.ofNullable(totalEstimatedCost)
+            .map(cost -> {
+                // Lower cost = higher score (inverse relationship)
+                return BigDecimal.ONE.subtract(
+                    cost.divide(new BigDecimal("1000"), 2, java.math.RoundingMode.HALF_UP)
+                ).max(BigDecimal.ZERO);
+            })
+            .orElse(BigDecimal.ONE);
+
+        BigDecimal riskScore = Optional.ofNullable(executionRisk)
+            .map(risk -> BigDecimal.ONE.subtract(risk)) // Lower risk = higher score
+            .orElse(BigDecimal.ONE);
+
+        BigDecimal confScore = Optional.ofNullable(confidenceScore)
+            .orElse(new BigDecimal("0.5"));
+
         // Weighted average: cost 40%, risk 30%, confidence 30%
         return costScore.multiply(new BigDecimal("0.4"))
             .add(riskScore.multiply(new BigDecimal("0.3")))
@@ -312,18 +327,27 @@ public class OrderExecutionStrategy {
     
     /**
      * Get strategy recommendation summary
+     * Uses Optional to eliminate ternary operators
      */
     public String getRecommendationSummary() {
         StringBuilder summary = new StringBuilder();
-        
+
         summary.append("Strategy: ").append(strategyType).append("\n");
         summary.append("Expected Cost: ").append(totalEstimatedCost).append(" bps\n");
-        summary.append("Expected Time: ").append(estimatedExecutionTime != null ? 
-                                                estimatedExecutionTime.toMinutes() + " minutes" : "N/A").append("\n");
-        summary.append("Risk Level: ").append(isHighRisk() ? "HIGH" : "NORMAL").append("\n");
+        summary.append("Expected Time: ").append(
+            Optional.ofNullable(estimatedExecutionTime)
+                .map(time -> time.toMinutes() + " minutes")
+                .orElse("N/A")
+        ).append("\n");
+        summary.append("Risk Level: ").append(
+            Optional.of(isHighRisk())
+                .filter(high -> high)
+                .map(high -> "HIGH")
+                .orElse("NORMAL")
+        ).append("\n");
         summary.append("Confidence: ").append(confidenceScore).append("\n");
         summary.append("Quality: ").append(strategyQualityScore).append("\n");
-        
+
         return summary.toString();
     }
     

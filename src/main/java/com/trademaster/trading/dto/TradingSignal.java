@@ -10,6 +10,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Trading Signal DTO
@@ -403,16 +404,18 @@ public class TradingSignal {
     
     /**
      * Get composite signal score
+     * Uses Optional patterns to eliminate if-statements and ternary operators
      */
     public BigDecimal getCompositeScore() {
-        if (signalCore == null) return BigDecimal.ZERO;
-        
-        BigDecimal baseScore = signalCore.getStrength() != null ? 
-            signalCore.getStrength() : BigDecimal.ZERO;
-        BigDecimal confidence = signalCore.getConfidence() != null ? 
-            signalCore.getConfidence() : BigDecimal.ZERO;
-        
-        return baseScore.multiply(confidence);
+        return Optional.ofNullable(signalCore)
+            .map(core -> {
+                BigDecimal baseScore = Optional.ofNullable(core.getStrength())
+                    .orElse(BigDecimal.ZERO);
+                BigDecimal confidence = Optional.ofNullable(core.getConfidence())
+                    .orElse(BigDecimal.ZERO);
+                return baseScore.multiply(confidence);
+            })
+            .orElse(BigDecimal.ZERO);
     }
     
     /**
@@ -435,42 +438,55 @@ public class TradingSignal {
     
     /**
      * Get signal age in minutes
+     * Uses Optional patterns to eliminate if-statements
      */
     public Long getAgeInMinutes() {
-        if (generatedAt == null) return 0L;
-        return java.time.Duration.between(generatedAt, Instant.now()).toMinutes();
+        return Optional.ofNullable(generatedAt)
+            .map(generated -> java.time.Duration.between(generated, Instant.now()).toMinutes())
+            .orElse(0L);
     }
     
     /**
      * Get minutes until expiration
+     * Uses Optional patterns to eliminate if-statements
      */
     public Long getMinutesUntilExpiration() {
-        if (expiresAt == null) return Long.MAX_VALUE;
-        return java.time.Duration.between(Instant.now(), expiresAt).toMinutes();
+        return Optional.ofNullable(expiresAt)
+            .map(expires -> java.time.Duration.between(Instant.now(), expires).toMinutes())
+            .orElse(Long.MAX_VALUE);
     }
     
     /**
      * Get signal summary for alerts
+     * Uses Optional patterns to eliminate if-statements and ternary operators
      */
     public String getSignalSummary() {
-        StringBuilder summary = new StringBuilder();
-        
-        if (signalCore != null) {
-            summary.append(signalCore.getSignalType()).append(" ")
-                  .append(symbol).append(" @ ")
-                  .append(marketContext != null && marketContext.getCurrentPrice() != null ? 
-                         marketContext.getCurrentPrice() : "N/A");
-            
-            if (signalCore.getStrength() != null) {
-                summary.append(" (Strength: ").append(signalCore.getStrength()).append(")");
-            }
-            
-            if (signalCore.getConfidence() != null) {
-                summary.append(" (Confidence: ").append(signalCore.getConfidence()).append(")");
-            }
-        }
-        
-        return summary.toString();
+        return Optional.ofNullable(signalCore)
+            .map(core -> {
+                StringBuilder summary = new StringBuilder();
+
+                // Build base summary
+                summary.append(core.getSignalType()).append(" ")
+                      .append(symbol).append(" @ ");
+
+                // Add current price using Optional chain
+                String price = Optional.ofNullable(marketContext)
+                    .flatMap(mc -> Optional.ofNullable(mc.getCurrentPrice()))
+                    .map(BigDecimal::toString)
+                    .orElse("N/A");
+                summary.append(price);
+
+                // Add strength using Optional
+                Optional.ofNullable(core.getStrength())
+                    .ifPresent(strength -> summary.append(" (Strength: ").append(strength).append(")"));
+
+                // Add confidence using Optional
+                Optional.ofNullable(core.getConfidence())
+                    .ifPresent(confidence -> summary.append(" (Confidence: ").append(confidence).append(")"));
+
+                return summary.toString();
+            })
+            .orElse("");
     }
     
     /**

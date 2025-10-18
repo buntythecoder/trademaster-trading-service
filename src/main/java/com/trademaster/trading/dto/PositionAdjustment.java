@@ -9,6 +9,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Position Adjustment DTO
@@ -232,20 +233,22 @@ public class PositionAdjustment {
     }
     
     /**
-     * Check if adjustment has significant financial impact
+     * Check if adjustment has significant financial impact - eliminates if-statements with Optional
      */
     public boolean hasSignificantImpact(BigDecimal threshold) {
-        if (impactAnalysis == null) return false;
-        
-        BigDecimal totalImpact = BigDecimal.ZERO;
-        if (impactAnalysis.getPnlImpact() != null) {
-            totalImpact = totalImpact.add(impactAnalysis.getPnlImpact().abs());
-        }
-        if (impactAnalysis.getNetCashImpact() != null) {
-            totalImpact = totalImpact.add(impactAnalysis.getNetCashImpact().abs());
-        }
-        
-        return totalImpact.compareTo(threshold) > 0;
+        return Optional.ofNullable(impactAnalysis)
+            .map(impact -> {
+                BigDecimal pnlImpact = Optional.ofNullable(impact.getPnlImpact())
+                    .map(BigDecimal::abs)
+                    .orElse(BigDecimal.ZERO);
+
+                BigDecimal cashImpact = Optional.ofNullable(impact.getNetCashImpact())
+                    .map(BigDecimal::abs)
+                    .orElse(BigDecimal.ZERO);
+
+                return pnlImpact.add(cashImpact).compareTo(threshold) > 0;
+            })
+            .orElse(false);
     }
     
     /**
@@ -257,19 +260,14 @@ public class PositionAdjustment {
     }
     
     /**
-     * Get processing time in hours
+     * Get processing time in hours - eliminates if-statement with Optional
      */
     public Long getProcessingTimeHours() {
-        if (workflow == null || 
-            workflow.getInitiatedAt() == null || 
-            workflow.getProcessedAt() == null) {
-            return 0L;
-        }
-        
-        return java.time.Duration.between(
-            workflow.getInitiatedAt(), 
-            workflow.getProcessedAt()
-        ).toHours();
+        return Optional.ofNullable(workflow)
+            .flatMap(wf -> Optional.ofNullable(wf.getInitiatedAt())
+                .flatMap(initiatedAt -> Optional.ofNullable(wf.getProcessedAt())
+                    .map(processedAt -> java.time.Duration.between(initiatedAt, processedAt).toHours())))
+            .orElse(0L);
     }
     
     /**
@@ -281,30 +279,31 @@ public class PositionAdjustment {
     }
     
     /**
-     * Get adjustment summary for reporting
+     * Get adjustment summary for reporting - eliminates all if-statements with Optional and Stream
      */
     public String getAdjustmentSummary() {
-        if (adjustmentDetails == null) return "No adjustment details";
-        
-        StringBuilder summary = new StringBuilder();
-        summary.append("Type: ").append(adjustmentType != null ? adjustmentType : "UNKNOWN");
-        
-        if (adjustmentDetails.getQuantityAdjustment() != null && 
-            adjustmentDetails.getQuantityAdjustment() != 0) {
-            summary.append(", Qty: ").append(adjustmentDetails.getQuantityAdjustment());
-        }
-        
-        if (adjustmentDetails.getPriceAdjustment() != null && 
-            adjustmentDetails.getPriceAdjustment().compareTo(BigDecimal.ZERO) != 0) {
-            summary.append(", Price: $").append(adjustmentDetails.getPriceAdjustment());
-        }
-        
-        if (adjustmentDetails.getCostBasisAdjustment() != null && 
-            adjustmentDetails.getCostBasisAdjustment().compareTo(BigDecimal.ZERO) != 0) {
-            summary.append(", Cost Basis: $").append(adjustmentDetails.getCostBasisAdjustment());
-        }
-        
-        return summary.toString();
+        return Optional.ofNullable(adjustmentDetails)
+            .map(details -> {
+                String typePart = "Type: " + Optional.ofNullable(adjustmentType).orElse("UNKNOWN");
+
+                String qtyPart = Optional.ofNullable(details.getQuantityAdjustment())
+                    .filter(qty -> qty != 0)
+                    .map(qty -> ", Qty: " + qty)
+                    .orElse("");
+
+                String pricePart = Optional.ofNullable(details.getPriceAdjustment())
+                    .filter(price -> price.compareTo(BigDecimal.ZERO) != 0)
+                    .map(price -> ", Price: $" + price)
+                    .orElse("");
+
+                String costBasisPart = Optional.ofNullable(details.getCostBasisAdjustment())
+                    .filter(cost -> cost.compareTo(BigDecimal.ZERO) != 0)
+                    .map(cost -> ", Cost Basis: $" + cost)
+                    .orElse("");
+
+                return typePart + qtyPart + pricePart + costBasisPart;
+            })
+            .orElse("No adjustment details");
     }
     
     /**

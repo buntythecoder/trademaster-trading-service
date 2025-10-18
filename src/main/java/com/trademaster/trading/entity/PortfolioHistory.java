@@ -12,6 +12,7 @@ import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.Optional;
 
 /**
  * Portfolio History Entity
@@ -130,28 +131,27 @@ public class PortfolioHistory {
     
     /**
      * Calculate cost basis for this historical position
+     * Uses Optional to eliminate if-statement
      */
     public BigDecimal getCostBasis() {
-        if (quantity == null || avgPrice == null) {
-            return BigDecimal.ZERO;
-        }
-        return avgPrice.multiply(new BigDecimal(Math.abs(quantity)));
+        return Optional.ofNullable(quantity)
+            .flatMap(qty -> Optional.ofNullable(avgPrice)
+                .map(price -> price.multiply(new BigDecimal(Math.abs(qty)))))
+            .orElse(BigDecimal.ZERO);
     }
     
     /**
      * Calculate P&L percentage for this historical position
+     * Uses Optional to eliminate if-statements
      */
     public BigDecimal getPnlPercent() {
-        if (unrealizedPnl == null || marketValue == null || marketValue.equals(BigDecimal.ZERO)) {
-            return BigDecimal.ZERO;
-        }
-        
-        BigDecimal costBasis = getCostBasis();
-        if (costBasis.equals(BigDecimal.ZERO)) {
-            return BigDecimal.ZERO;
-        }
-        
-        return unrealizedPnl.divide(costBasis, 4, java.math.RoundingMode.HALF_UP)
-                           .multiply(new BigDecimal("100"));
+        return Optional.ofNullable(unrealizedPnl)
+            .flatMap(pnl -> Optional.ofNullable(marketValue)
+                .filter(mv -> !mv.equals(BigDecimal.ZERO))
+                .map(mv -> getCostBasis())
+                .filter(costBasis -> !costBasis.equals(BigDecimal.ZERO))
+                .map(costBasis -> pnl.divide(costBasis, 4, java.math.RoundingMode.HALF_UP)
+                                     .multiply(new BigDecimal("100"))))
+            .orElse(BigDecimal.ZERO);
     }
 }

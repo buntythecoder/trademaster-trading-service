@@ -7,6 +7,7 @@ import jakarta.validation.constraints.*;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.Optional;
 
 /**
  * Order Request DTO
@@ -92,18 +93,68 @@ public record OrderRequest(
      * Client-side order reference (optional)
      */
     @Size(max = 100, message = "Client order reference cannot exceed 100 characters")
-    String clientOrderRef
+    String clientOrderRef,
+
+    /**
+     * Trailing stop amount (for trailing stop orders)
+     */
+    @DecimalMin(value = "0.01", message = "Trail amount must be at least 0.01")
+    BigDecimal trailAmount,
+
+    /**
+     * Trailing stop percentage (for trailing stop orders)
+     */
+    @DecimalMin(value = "0.01", message = "Trail percent must be at least 0.01")
+    @DecimalMax(value = "100.00", message = "Trail percent cannot exceed 100%")
+    BigDecimal trailPercent,
+
+    /**
+     * Entry price (for bracket orders)
+     */
+    @DecimalMin(value = "0.01", message = "Entry price must be at least 0.01")
+    BigDecimal entryPrice,
+
+    /**
+     * Profit target price (for bracket orders)
+     */
+    @DecimalMin(value = "0.01", message = "Profit target must be at least 0.01")
+    BigDecimal profitTarget,
+
+    /**
+     * Display quantity (for iceberg orders)
+     */
+    @Min(value = 1, message = "Display quantity must be at least 1")
+    Integer displayQuantity,
+
+    /**
+     * Time window in minutes (for TWAP/VWAP orders)
+     */
+    @Min(value = 1, message = "Time window must be at least 1 minute")
+    Integer timeWindowMinutes,
+
+    /**
+     * Slice interval in seconds (for TWAP orders)
+     */
+    @Min(value = 1, message = "Slice interval must be at least 1 second")
+    Integer sliceIntervalSeconds,
+
+    /**
+     * Participation rate percentage (for VWAP orders)
+     */
+    @DecimalMin(value = "0.01", message = "Participation rate must be at least 0.01%")
+    @DecimalMax(value = "100.00", message = "Participation rate cannot exceed 100%")
+    BigDecimal participationRate
 ) {
     
     /**
      * Compact constructor for validation
+     * Rule #3: Functional programming, no if-else
      */
     public OrderRequest {
-        // Set default TimeInForce if null
-        if (timeInForce == null) {
-            timeInForce = TimeInForce.DAY;
-        }
-        
+        // Set default TimeInForce if null using functional pattern
+        timeInForce = Optional.ofNullable(timeInForce)
+            .orElse(TimeInForce.DAY);
+
         // Validate order business rules
         validate();
     }
@@ -119,59 +170,90 @@ public record OrderRequest(
     
     /**
      * Validate that required prices are provided based on order type
+     * Rule #3: Functional programming with pattern matching, no if-else
      */
     private void validatePriceRequirements() {
-        if (orderType.requiresLimitPrice() && limitPrice == null) {
-            throw new IllegalArgumentException(
-                String.format("Limit price is required for %s orders", orderType));
-        }
-        
-        if (orderType.requiresStopPrice() && stopPrice == null) {
-            throw new IllegalArgumentException(
-                String.format("Stop price is required for %s orders", orderType));
-        }
-        
-        // Validate stop-limit order price relationship
-        if (orderType == OrderType.STOP_LIMIT && limitPrice != null && stopPrice != null) {
-            if (side == OrderSide.BUY && stopPrice.compareTo(limitPrice) < 0) {
+        // Validate limit price requirement using Optional pattern
+        Optional.of(orderType)
+            .filter(type -> type.requiresLimitPrice() && limitPrice == null)
+            .ifPresent(type -> {
+                throw new IllegalArgumentException(
+                    String.format("Limit price is required for %s orders", type));
+            });
+
+        // Validate stop price requirement using Optional pattern
+        Optional.of(orderType)
+            .filter(type -> type.requiresStopPrice() && stopPrice == null)
+            .ifPresent(type -> {
+                throw new IllegalArgumentException(
+                    String.format("Stop price is required for %s orders", type));
+            });
+
+        // Validate stop-limit order price relationship using pattern matching
+        Optional.of(orderType)
+            .filter(type -> type == OrderType.STOP_LIMIT && limitPrice != null && stopPrice != null)
+            .ifPresent(type -> validateStopLimitPriceRelationship());
+    }
+
+    /**
+     * Validate stop-limit price relationship based on order side
+     * Rule #14: Pattern matching excellence
+     * Rule #3: Functional programming with Optional pattern
+     */
+    private void validateStopLimitPriceRelationship() {
+        // BUY orders: stop price must be >= limit price
+        Optional.of(side)
+            .filter(s -> s == OrderSide.BUY && stopPrice.compareTo(limitPrice) < 0)
+            .ifPresent(s -> {
                 throw new IllegalArgumentException(
                     "For buy stop-limit orders, stop price must be >= limit price");
-            }
-            if (side == OrderSide.SELL && stopPrice.compareTo(limitPrice) > 0) {
+            });
+
+        // SELL orders: stop price must be <= limit price
+        Optional.of(side)
+            .filter(s -> s == OrderSide.SELL && stopPrice.compareTo(limitPrice) > 0)
+            .ifPresent(s -> {
                 throw new IllegalArgumentException(
                     "For sell stop-limit orders, stop price must be <= limit price");
-            }
-        }
+            });
     }
     
     /**
      * Validate expiry date requirement for GTD orders
+     * Rule #3: Functional programming with pattern matching, no if-else
      */
     private void validateExpiryDateRequirement() {
-        if (timeInForce == TimeInForce.GTD && expiryDate == null) {
-            throw new IllegalArgumentException("Expiry date is required for Good Till Date orders");
-        }
-        
-        if (timeInForce != TimeInForce.GTD && expiryDate != null) {
-            throw new IllegalArgumentException("Expiry date should only be set for Good Till Date orders");
-        }
+        // Validate GTD requires expiry date using Optional pattern
+        Optional.of(timeInForce)
+            .filter(tif -> tif == TimeInForce.GTD && expiryDate == null)
+            .ifPresent(tif -> {
+                throw new IllegalArgumentException("Expiry date is required for Good Till Date orders");
+            });
+
+        // Validate only GTD should have expiry date using Optional pattern
+        Optional.of(timeInForce)
+            .filter(tif -> tif != TimeInForce.GTD && expiryDate != null)
+            .ifPresent(tif -> {
+                throw new IllegalArgumentException("Expiry date should only be set for Good Till Date orders");
+            });
     }
     
     /**
      * Validate order value limits
+     * Rule #3: Functional programming with Optional pattern, no if-else
      */
     private void validateOrderValue() {
-        BigDecimal price = getEffectivePrice();
-        if (price != null) {
-            BigDecimal orderValue = price.multiply(BigDecimal.valueOf(quantity));
-            BigDecimal maxOrderValue = BigDecimal.valueOf(10_000_000); // ₹1 Crore
-            
-            if (orderValue.compareTo(maxOrderValue) > 0) {
+        BigDecimal maxOrderValue = BigDecimal.valueOf(10_000_000); // ₹1 Crore
+
+        // Functional validation using Optional chain
+        Optional.ofNullable(getEffectivePrice())
+            .map(price -> price.multiply(BigDecimal.valueOf(quantity)))
+            .filter(orderValue -> orderValue.compareTo(maxOrderValue) > 0)
+            .ifPresent(orderValue -> {
                 throw new IllegalArgumentException(
-                    String.format("Order value ₹%.2f exceeds maximum allowed ₹%.2f", 
+                    String.format("Order value ₹%.2f exceeds maximum allowed ₹%.2f",
                                  orderValue, maxOrderValue));
-            }
-        }
+            });
     }
     
     /**
@@ -187,11 +269,13 @@ public record OrderRequest(
     }
     
     /**
-     * Calculate estimated order value
+     * Calculate estimated order value - eliminates ternary with Optional
      */
     public BigDecimal getEstimatedOrderValue() {
         BigDecimal price = getEffectivePrice();
-        return price != null ? price.multiply(BigDecimal.valueOf(quantity)) : BigDecimal.ZERO;
+        return Optional.ofNullable(price)
+            .map(p -> p.multiply(BigDecimal.valueOf(quantity)))
+            .orElse(BigDecimal.ZERO);
     }
     
     /**
@@ -224,9 +308,24 @@ public record OrderRequest(
             .timeInForce(this.timeInForce)
             .expiryDate(this.expiryDate)
             .brokerName(this.brokerName)
-            .clientOrderRef(this.clientOrderRef);
+            .clientOrderRef(this.clientOrderRef)
+            .trailAmount(this.trailAmount)
+            .trailPercent(this.trailPercent)
+            .entryPrice(this.entryPrice)
+            .profitTarget(this.profitTarget)
+            .displayQuantity(this.displayQuantity)
+            .timeWindowMinutes(this.timeWindowMinutes)
+            .sliceIntervalSeconds(this.sliceIntervalSeconds)
+            .participationRate(this.participationRate);
     }
-    
+
+    /**
+     * Convenience method for backward compatibility - maps to limitPrice
+     */
+    public BigDecimal price() {
+        return this.limitPrice;
+    }
+
     public static class OrderRequestBuilder {
         private String symbol;
         private String exchange;
@@ -239,6 +338,14 @@ public record OrderRequest(
         private LocalDate expiryDate;
         private String brokerName;
         private String clientOrderRef;
+        private BigDecimal trailAmount;
+        private BigDecimal trailPercent;
+        private BigDecimal entryPrice;
+        private BigDecimal profitTarget;
+        private Integer displayQuantity;
+        private Integer timeWindowMinutes;
+        private Integer sliceIntervalSeconds;
+        private BigDecimal participationRate;
         
         public OrderRequestBuilder symbol(String symbol) {
             this.symbol = symbol;
@@ -300,11 +407,53 @@ public record OrderRequest(
             this.clientOrderRef = clientOrderRef;
             return this;
         }
-        
+
+        public OrderRequestBuilder trailAmount(BigDecimal trailAmount) {
+            this.trailAmount = trailAmount;
+            return this;
+        }
+
+        public OrderRequestBuilder trailPercent(BigDecimal trailPercent) {
+            this.trailPercent = trailPercent;
+            return this;
+        }
+
+        public OrderRequestBuilder entryPrice(BigDecimal entryPrice) {
+            this.entryPrice = entryPrice;
+            return this;
+        }
+
+        public OrderRequestBuilder profitTarget(BigDecimal profitTarget) {
+            this.profitTarget = profitTarget;
+            return this;
+        }
+
+        public OrderRequestBuilder displayQuantity(Integer displayQuantity) {
+            this.displayQuantity = displayQuantity;
+            return this;
+        }
+
+        public OrderRequestBuilder timeWindowMinutes(Integer timeWindowMinutes) {
+            this.timeWindowMinutes = timeWindowMinutes;
+            return this;
+        }
+
+        public OrderRequestBuilder sliceIntervalSeconds(Integer sliceIntervalSeconds) {
+            this.sliceIntervalSeconds = sliceIntervalSeconds;
+            return this;
+        }
+
+        public OrderRequestBuilder participationRate(BigDecimal participationRate) {
+            this.participationRate = participationRate;
+            return this;
+        }
+
         public OrderRequest build() {
             return new OrderRequest(symbol, exchange, orderType, side, quantity,
                                   limitPrice, stopPrice, timeInForce, expiryDate,
-                                  brokerName, clientOrderRef);
+                                  brokerName, clientOrderRef, trailAmount, trailPercent,
+                                  entryPrice, profitTarget, displayQuantity,
+                                  timeWindowMinutes, sliceIntervalSeconds, participationRate);
         }
     }
 }

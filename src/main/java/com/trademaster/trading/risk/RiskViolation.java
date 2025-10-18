@@ -51,35 +51,3 @@ public class RiskViolation {
      */
     private String suggestedAction;
 }
-
-/**
- * Risk Violation Types
- */
-enum RiskViolationType {
-    INSUFFICIENT_BUYING_POWER,
-    POSITION_LIMIT_EXCEEDED,
-    CONCENTRATION_RISK,
-    DAILY_TRADE_LIMIT,
-    ORDER_VALUE_LIMIT,
-    PATTERN_DAY_TRADER,
-    MARGIN_REQUIREMENT,
-    SECTOR_EXPOSURE,
-    GENERAL,
-    
-    // Additional constants required by BasicRiskCheckEngine
-    SYSTEM_ERROR,
-    MAX_OPEN_ORDERS_EXCEEDED,
-    DAILY_TRADING_LIMIT_EXCEEDED,
-    CONCENTRATION_RISK_EXCEEDED,
-    ORDER_VALUE_EXCEEDED
-}
-
-/**
- * Risk Severity Levels
- */
-enum RiskSeverity {
-    LOW,      // Warning only
-    MEDIUM,   // Caution required
-    HIGH,     // Blocks order execution
-    CRITICAL  // Immediate attention required
-}

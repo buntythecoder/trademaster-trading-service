@@ -20,6 +20,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import javax.crypto.spec.SecretKeySpec;
 import java.io.IOException;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
 /**
@@ -51,18 +52,21 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         
         try {
             String token = extractTokenFromRequest(request);
-            
-            if (token != null && SecurityContextHolder.getContext().getAuthentication() == null) {
-                // Validate token asynchronously using Virtual Threads
-                CompletableFuture.runAsync(() -> {
-                    try {
-                        validateAndSetAuthentication(token);
-                    } catch (Exception e) {
-                        log.warn("JWT validation failed: {}", e.getMessage());
-                    }
-                }).join(); // Block to maintain filter chain order
-            }
-            
+
+            // Eliminates if-statement using Optional.filter().ifPresent()
+            Optional.ofNullable(token)
+                .filter(t -> SecurityContextHolder.getContext().getAuthentication() == null)
+                .ifPresent(t -> {
+                    // Validate token asynchronously using Virtual Threads
+                    CompletableFuture.runAsync(() -> {
+                        try {
+                            validateAndSetAuthentication(t);
+                        } catch (Exception e) {
+                            log.warn("JWT validation failed: {}", e.getMessage());
+                        }
+                    }).join(); // Block to maintain filter chain order
+                });
+
         } catch (Exception e) {
             log.error("JWT authentication error: {}", e.getMessage());
         }
@@ -72,12 +76,13 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     
     private String extractTokenFromRequest(HttpServletRequest request) {
         String bearerToken = request.getHeader("Authorization");
-        
-        if (StringUtils.hasText(bearerToken) && bearerToken.startsWith("Bearer ")) {
-            return bearerToken.substring(7);
-        }
-        
-        return null;
+
+        // Eliminates if-statement using Optional.filter().map().orElse()
+        return Optional.ofNullable(bearerToken)
+            .filter(StringUtils::hasText)
+            .filter(token -> token.startsWith("Bearer "))
+            .map(token -> token.substring(7))
+            .orElse(null);
     }
     
     private void validateAndSetAuthentication(String token) {
@@ -93,25 +98,32 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             String userId = claims.getSubject();
             String username = claims.get("username", String.class);
             List<String> roles = claims.get("roles", List.class);
-            
-            if (userId != null && username != null) {
-                List<SimpleGrantedAuthority> authorities = roles != null 
-                    ? roles.stream().map(role -> new SimpleGrantedAuthority("ROLE_" + role)).toList()
-                    : List.of(new SimpleGrantedAuthority("ROLE_USER"));
-                
-                TradingUserPrincipal principal = TradingUserPrincipal.builder()
-                    .userId(Long.parseLong(userId))
-                    .username(username)
-                    .roles(roles)
-                    .build();
-                
-                UsernamePasswordAuthenticationToken authentication = 
-                    new UsernamePasswordAuthenticationToken(principal, null, authorities);
-                
-                SecurityContextHolder.getContext().setAuthentication(authentication);
-                
-                log.debug("JWT authentication successful for user: {}", username);
-            }
+
+            // Eliminates if-statement using Optional.flatMap() chain
+            // Eliminates ternary operator using Optional.map().orElse()
+            Optional.ofNullable(userId)
+                .flatMap(uid -> Optional.ofNullable(username)
+                    .map(uname -> {
+                        List<SimpleGrantedAuthority> authorities = Optional.ofNullable(roles)
+                            .map(r -> r.stream()
+                                .map(role -> new SimpleGrantedAuthority("ROLE_" + role))
+                                .toList())
+                            .orElse(List.of(new SimpleGrantedAuthority("ROLE_USER")));
+
+                        TradingUserPrincipal principal = TradingUserPrincipal.builder()
+                            .userId(Long.parseLong(uid))
+                            .username(uname)
+                            .roles(roles)
+                            .build();
+
+                        UsernamePasswordAuthenticationToken authentication =
+                            new UsernamePasswordAuthenticationToken(principal, null, authorities);
+
+                        SecurityContextHolder.getContext().setAuthentication(authentication);
+
+                        log.debug("JWT authentication successful for user: {}", uname);
+                        return true; // Dummy return value for map
+                    }));
             
         } catch (JwtException e) {
             log.warn("Invalid JWT token: {}", e.getMessage());

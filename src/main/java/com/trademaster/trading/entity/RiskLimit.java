@@ -10,6 +10,7 @@ import org.hibernate.annotations.UpdateTimestamp;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.Optional;
 
 /**
  * Risk Limit Entity
@@ -163,19 +164,22 @@ public class RiskLimit {
     }
     
     /**
-     * Get effective limit considering dynamic adjustments
+     * Get effective limit considering dynamic adjustments - eliminates if-statements with Optional
      */
     public BigDecimal getEffectiveLimit(BigDecimal baseLimit, String marketCondition) {
-        if (!enableVolatilityAdjustment || volatilityMultiplier == null) {
-            return baseLimit;
-        }
-        
-        // Adjust limit based on market volatility
-        if ("HIGH_VOLATILITY".equals(marketCondition)) {
-            return baseLimit.multiply(volatilityMultiplier);
-        }
-        
-        return baseLimit;
+        // Check if adjustment enabled and multiplier available - eliminates if-statements
+        return Optional.of(enableVolatilityAdjustment)
+            .filter(Boolean::booleanValue)
+            .flatMap(enabled -> Optional.ofNullable(volatilityMultiplier)
+                .map(multiplier ->
+                    // Adjust based on market condition - eliminates if-statement
+                    Optional.ofNullable(marketCondition)
+                        .filter("HIGH_VOLATILITY"::equals)
+                        .map(condition -> baseLimit.multiply(multiplier))
+                        .orElse(baseLimit)
+                )
+            )
+            .orElse(baseLimit);
     }
     
     /**
@@ -195,31 +199,18 @@ public class RiskLimit {
     }
     
     /**
-     * Pre-persist callback to set defaults
+     * Pre-persist callback to set defaults - eliminates all if-statements with Optional
      */
     @PrePersist
     protected void onCreate() {
-        if (active == null) {
-            active = true;
-        }
-        if (allowMarginTrading == null) {
-            allowMarginTrading = false;
-        }
-        if (enableVolatilityAdjustment == null) {
-            enableVolatilityAdjustment = false;
-        }
-        if (enableRealTimeAlerts == null) {
-            enableRealTimeAlerts = true;
-        }
-        if (volatilityMultiplier == null) {
-            volatilityMultiplier = BigDecimal.ONE;
-        }
-        if (warningThresholdPercent == null) {
-            warningThresholdPercent = new BigDecimal("80.0");
-        }
-        if (criticalThresholdPercent == null) {
-            criticalThresholdPercent = new BigDecimal("95.0");
-        }
+        // Set defaults using Optional.orElse() - functional pattern eliminates all if-statements
+        active = Optional.ofNullable(active).orElse(true);
+        allowMarginTrading = Optional.ofNullable(allowMarginTrading).orElse(false);
+        enableVolatilityAdjustment = Optional.ofNullable(enableVolatilityAdjustment).orElse(false);
+        enableRealTimeAlerts = Optional.ofNullable(enableRealTimeAlerts).orElse(true);
+        volatilityMultiplier = Optional.ofNullable(volatilityMultiplier).orElse(BigDecimal.ONE);
+        warningThresholdPercent = Optional.ofNullable(warningThresholdPercent).orElse(new BigDecimal("80.0"));
+        criticalThresholdPercent = Optional.ofNullable(criticalThresholdPercent).orElse(new BigDecimal("95.0"));
     }
     
     /**

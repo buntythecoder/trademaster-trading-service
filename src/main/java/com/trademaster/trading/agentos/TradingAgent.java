@@ -12,6 +12,7 @@ import org.springframework.stereotype.Component;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.StructuredTaskScope;
 import java.util.function.Supplier;
@@ -79,9 +80,13 @@ public class TradingAgent implements AgentOSComponent {
                 var execution = processOrderExecution(order);
                 capabilityRegistry.recordSuccessfulExecution("ORDER_EXECUTION");
                 
-                return String.format("Order executed: %s %s %s at %s", 
-                                   order.side(), order.quantity(), order.symbol(), 
-                                   order.getEffectivePrice() != null ? "$" + order.getEffectivePrice() : "MARKET");
+                // Eliminates ternary operator using Optional.map().orElse()
+                String priceDisplay = Optional.ofNullable(order.getEffectivePrice())
+                    .map(price -> "$" + price)
+                    .orElse("MARKET");
+
+                return String.format("Order executed: %s %s %s at %s",
+                                   order.side(), order.quantity(), order.symbol(), priceDisplay);
                                    
             } catch (Exception e) {
                 log.error("Failed to execute order", e);
@@ -283,18 +288,21 @@ public class TradingAgent implements AgentOSComponent {
     
     /**
      * Validates order parameters and business rules
+     * Eliminates if-statements using Optional.filter().orElseThrow() pattern
      */
     private String validateOrder(OrderRequest order) {
         try {
-            // Basic order validation
-            if (order.quantity() <= 0) {
-                throw new IllegalArgumentException("Quantity must be positive");
-            }
-            
-            if (order.symbol() == null || order.symbol().trim().isEmpty()) {
-                throw new IllegalArgumentException("Symbol is required");
-            }
-            
+            // Validates quantity is positive using Optional.filter()
+            Optional.of(order.quantity())
+                .filter(qty -> qty > 0)
+                .orElseThrow(() -> new IllegalArgumentException("Quantity must be positive"));
+
+            // Validates symbol is present and not empty using Optional.filter()
+            Optional.ofNullable(order.symbol())
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .orElseThrow(() -> new IllegalArgumentException("Symbol is required"));
+
             return "Order validation passed";
         } catch (Exception e) {
             log.warn("Order validation failed: {}", e.getMessage());
@@ -381,7 +389,11 @@ public class TradingAgent implements AgentOSComponent {
     
     private String selectBestBroker(OrderRequest order, List<String> brokers) {
         // Mock implementation - would use sophisticated routing algorithm
-        return brokers.isEmpty() ? "DefaultBroker" : brokers.get(0);
+        // Eliminates ternary operator using Optional.filter().map().orElse()
+        return Optional.of(brokers)
+            .filter(list -> !list.isEmpty())
+            .map(list -> list.get(0))
+            .orElse("DefaultBroker");
     }
     
     private List<Position> retrieveUserPositions(String userId, List<String> symbols) {

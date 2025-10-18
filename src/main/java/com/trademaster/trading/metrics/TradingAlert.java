@@ -6,6 +6,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.time.Instant;
+import java.util.Optional;
 
 /**
  * Trading Alert Data Model
@@ -78,15 +79,15 @@ public class TradingAlert {
      * Check if alert requires escalation based on age and severity
      */
     public boolean requiresEscalation() {
-        if (escalated || resolved) {
-            return false;
-        }
-        
-        return switch (severity) {
-            case EMERGENCY -> getAgeInMinutes() > 5;  // 5 minutes
-            case CRITICAL -> getAgeInMinutes() > 15;  // 15 minutes
-            case WARNING -> getAgeInMinutes() > 60;   // 1 hour
-            case INFO -> false;  // Info alerts don't escalate
-        };
+        // Eliminates if-statement using Optional.of().filter()
+        return Optional.of(escalated || resolved)
+            .filter(alreadyHandled -> !alreadyHandled)
+            .map(notHandled -> switch (severity) {
+                case EMERGENCY -> getAgeInMinutes() > 5;  // 5 minutes
+                case CRITICAL -> getAgeInMinutes() > 15;  // 15 minutes
+                case WARNING -> getAgeInMinutes() > 60;   // 1 hour
+                case INFO -> false;  // Info alerts don't escalate
+            })
+            .orElse(false);
     }
 }

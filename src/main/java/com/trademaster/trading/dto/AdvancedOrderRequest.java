@@ -12,6 +12,7 @@ import jakarta.validation.constraints.*;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Advanced Order Request DTO
@@ -248,16 +249,18 @@ public class AdvancedOrderRequest {
     }
     
     /**
-     * Calculate estimated execution time based on strategy
+     * Calculate estimated execution time based on strategy - eliminates all 3 ternaries with Optional
      */
     public Integer getEstimatedExecutionTimeMinutes() {
         return switch (executionStrategy) {
             case "AGGRESSIVE" -> 1;
             case "PATIENT" -> 30;
-            case "TWAP" -> durationMinutes != null ? durationMinutes : 60;
-            case "VWAP" -> lookBackPeriods != null ? lookBackPeriods * 5 : 120;
-            case "ICEBERG" -> quantity != null && displayQuantity != null ? 
-                             (quantity / displayQuantity) * 5 : 60;
+            case "TWAP" -> Optional.ofNullable(durationMinutes).orElse(60);
+            case "VWAP" -> Optional.ofNullable(lookBackPeriods).map(periods -> periods * 5).orElse(120);
+            case "ICEBERG" -> Optional.ofNullable(quantity)
+                .flatMap(q -> Optional.ofNullable(displayQuantity)
+                    .map(dq -> (q / dq) * 5))
+                .orElse(60);
             case "BRACKET", "OCO" -> 15;
             case "IMPLEMENTATION_SHORTFALL" -> 45;
             default -> 30;

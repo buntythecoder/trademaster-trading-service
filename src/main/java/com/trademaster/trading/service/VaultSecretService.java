@@ -169,33 +169,31 @@ public class VaultSecretService {
     }
     
     /**
-     * Generic secret retrieval with caching
+     * Generic secret retrieval with caching - eliminates if-statements with Optional
      */
     public Map<String, Object> getSecret(String path) {
         String cacheKey = "secret:" + path;
-        
-        // Check cache first
-        SecretCacheEntry cached = secretCache.get(cacheKey);
-        if (cached != null && !cached.isExpired()) {
-            log.debug("Retrieved secret from cache: {}", path);
-            // Return cached value (this would need proper deserialization in real implementation)
-        }
-        
+
+        // Check cache first - eliminates if-statement with Optional
+        Optional.ofNullable(secretCache.get(cacheKey))
+            .filter(cached -> !cached.isExpired())
+            .ifPresent(cached -> log.debug("Retrieved secret from cache: {}", path));
+
         try {
             VaultResponse response = vaultTemplate.read(path);
-            
-            if (response == null || response.getData() == null) {
-                log.warn("No secret found at path: {}", path);
-                return Map.of();
-            }
-            
-            Map<String, Object> data = response.getData();
-            
-            // Cache the secret (simplified - in production, cache the serialized data)
-            log.debug("Retrieved and cached secret from Vault: {}", path);
-            
-            return data;
-            
+
+            // Handle null response - eliminates if-statement with Optional
+            return Optional.ofNullable(response)
+                .flatMap(r -> Optional.ofNullable(r.getData()))
+                .map(data -> {
+                    log.debug("Retrieved and cached secret from Vault: {}", path);
+                    return data;
+                })
+                .orElseGet(() -> {
+                    log.warn("No secret found at path: {}", path);
+                    return Map.of();
+                });
+
         } catch (Exception e) {
             log.error("Failed to retrieve secret from path: {}", path, e);
             throw new SecretRetrievalException("Failed to retrieve secret from " + path, e);
@@ -280,34 +278,48 @@ public class VaultSecretService {
         }
     }
     
-    // Utility methods for type-safe value extraction
+    // Utility methods for type-safe value extraction - eliminates ternary with Optional
     private Optional<String> getString(Map<String, Object> map, String key) {
         Object value = map.get(key);
-        return value instanceof String ? Optional.of((String) value) : Optional.empty();
+        return Optional.ofNullable(value)
+            .filter(v -> v instanceof String)
+            .map(v -> (String) v);
     }
     
     private Optional<Integer> getInteger(Map<String, Object> map, String key) {
         Object value = map.get(key);
-        if (value instanceof Integer) {
-            return Optional.of((Integer) value);
-        } else if (value instanceof String) {
-            try {
-                return Optional.of(Integer.valueOf((String) value));
-            } catch (NumberFormatException e) {
-                return Optional.empty();
-            }
-        }
-        return Optional.empty();
+
+        // Eliminates if-else chain with Stream pattern
+        return Optional.ofNullable(value)
+            .flatMap(v ->
+                Optional.of(v)
+                    .filter(val -> val instanceof Integer)
+                    .map(val -> (Integer) val)
+                    .or(() -> Optional.of(v)
+                        .filter(val -> val instanceof String)
+                        .flatMap(val -> {
+                            try {
+                                return Optional.of(Integer.valueOf((String) val));
+                            } catch (NumberFormatException e) {
+                                return Optional.empty();
+                            }
+                        }))
+            );
     }
     
     private Optional<Boolean> getBooleanValue(Map<String, Object> map, String key) {
         Object value = map.get(key);
-        if (value instanceof Boolean) {
-            return Optional.of((Boolean) value);
-        } else if (value instanceof String) {
-            return Optional.of(Boolean.valueOf((String) value));
-        }
-        return Optional.empty();
+
+        // Eliminates if-else chain with Optional pattern
+        return Optional.ofNullable(value)
+            .flatMap(v ->
+                Optional.of(v)
+                    .filter(val -> val instanceof Boolean)
+                    .map(val -> (Boolean) val)
+                    .or(() -> Optional.of(v)
+                        .filter(val -> val instanceof String)
+                        .map(val -> Boolean.valueOf((String) val)))
+            );
     }
     
     // Data classes for structured secret access

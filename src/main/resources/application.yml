@@ -44,15 +44,8 @@ spring:
       enabled: true
   
   
-  # Security Configuration
+  # Security Configuration - JWT and Authentication
   security:
-    require-ssl: ${REQUIRE_SSL:false}
-    headers:
-      # HSTS (HTTP Strict Transport Security)
-      content-security-policy: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self'"
-      frame-options: DENY
-      content-type-options: nosniff
-      referrer-policy: strict-origin-when-cross-origin
     user:
       name: ${SPRING_SECURITY_USER_NAME:admin}
       password: ${SPRING_SECURITY_USER_PASSWORD:admin}
@@ -303,6 +296,135 @@ agentos:
         max-concurrent-requests: 100
         timeout-ms: 200
         resource-requirements: ["CPU:medium", "Memory:low"]
+      real-time-quotes:
+        proficiency: EXPERT
+        max-concurrent-requests: 1000
+        timeout-ms: 50
+        resource-requirements: ["Network:high", "CPU:medium"]
+      order-book-data:
+        proficiency: ADVANCED
+        max-concurrent-requests: 500
+        timeout-ms: 100
+        resource-requirements: ["Network:high", "Memory:medium"]
+      trade-stream:
+        proficiency: ADVANCED
+        max-concurrent-requests: 800
+        timeout-ms: 50
+        resource-requirements: ["Network:high", "CPU:medium"]
+      market-status:
+        proficiency: INTERMEDIATE
+        max-concurrent-requests: 200
+        timeout-ms: 200
+        resource-requirements: ["CPU:low", "Memory:low"]
+      cached-quotes:
+        proficiency: EXPERT
+        max-concurrent-requests: 2000
+        timeout-ms: 10
+        resource-requirements: ["Memory:medium", "CPU:low"]
+      # Order Strategy Capabilities
+      advanced-order-execution:
+        proficiency: EXPERT
+        max-concurrent-requests: 100
+        timeout-ms: 100
+        resource-requirements: ["CPU:high", "Memory:medium"]
+      stop-loss-execution:
+        proficiency: EXPERT
+        max-concurrent-requests: 500
+        timeout-ms: 50
+        resource-requirements: ["CPU:high", "Memory:low"]
+      trailing-stop-execution:
+        proficiency: EXPERT
+        max-concurrent-requests: 500
+        timeout-ms: 50
+        resource-requirements: ["CPU:high", "Memory:low"]
+      bracket-order-execution:
+        proficiency: ADVANCED
+        max-concurrent-requests: 300
+        timeout-ms: 150
+        resource-requirements: ["CPU:medium", "Memory:medium"]
+      iceberg-order-execution:
+        proficiency: ADVANCED
+        max-concurrent-requests: 200
+        timeout-ms: 150
+        resource-requirements: ["CPU:medium", "Memory:medium"]
+      twap-execution:
+        proficiency: ADVANCED
+        max-concurrent-requests: 100
+        timeout-ms: 200
+        resource-requirements: ["CPU:medium", "Memory:high"]
+      vwap-execution:
+        proficiency: EXPERT
+        max-concurrent-requests: 100
+        timeout-ms: 200
+        resource-requirements: ["CPU:high", "Memory:high"]
+      price-monitoring:
+        proficiency: EXPERT
+        max-concurrent-requests: 10000
+        timeout-ms: 10
+        resource-requirements: ["CPU:high", "Memory:medium"]
+      order-cancellation:
+        proficiency: EXPERT
+        max-concurrent-requests: 1000
+        timeout-ms: 50
+        resource-requirements: ["CPU:medium", "Memory:low"]
+      order-modification:
+        proficiency: ADVANCED
+        max-concurrent-requests: 500
+        timeout-ms: 100
+        resource-requirements: ["CPU:medium", "Memory:low"]
+      # AI-Powered Trade Recommendation Capabilities
+      technical-analysis:
+        proficiency: EXPERT
+        max-concurrent-requests: 200
+        timeout-ms: 150
+        resource-requirements: ["CPU:high", "Memory:medium"]
+      sentiment-analysis:
+        proficiency: EXPERT
+        max-concurrent-requests: 200
+        timeout-ms: 100
+        resource-requirements: ["CPU:medium", "Memory:medium"]
+      risk-assessment:
+        proficiency: EXPERT
+        max-concurrent-requests: 200
+        timeout-ms: 150
+        resource-requirements: ["CPU:high", "Memory:medium"]
+      trade-recommendation:
+        proficiency: EXPERT
+        max-concurrent-requests: 100
+        timeout-ms: 500
+        resource-requirements: ["CPU:high", "Memory:high"]
+      # Portfolio Analytics Capabilities
+      performance-metrics:
+        proficiency: EXPERT
+        max-concurrent-requests: 300
+        timeout-ms: 200
+        resource-requirements: ["CPU:high", "Memory:medium"]
+      risk-metrics:
+        proficiency: EXPERT
+        max-concurrent-requests: 300
+        timeout-ms: 200
+        resource-requirements: ["CPU:high", "Memory:medium"]
+      attribution-analysis:
+        proficiency: EXPERT
+        max-concurrent-requests: 200
+        timeout-ms: 250
+        resource-requirements: ["CPU:high", "Memory:medium"]
+      # Broker Routing Capabilities
+      broker-selection:
+        proficiency: EXPERT
+        max-concurrent-requests: 500
+        timeout-ms: 100
+        resource-requirements: ["CPU:high", "Memory:medium"]
+      order-splitting:
+        proficiency: EXPERT
+        max-concurrent-requests: 200
+        timeout-ms: 150
+        resource-requirements: ["CPU:high", "Memory:medium"]
+      performance-tracking:
+        proficiency: EXPERT
+        max-concurrent-requests: 1000
+        timeout-ms: 50
+        resource-requirements: ["CPU:medium", "Memory:low"]
     health:
       check-interval-seconds: 30
       performance-window-minutes: 5
@@ -310,12 +432,58 @@ agentos:
 
 # TradeMaster Trading Configuration
 trademaster:
-  # Service-to-Service Security Configuration
+  # Common Library Configuration
+  common:
+    # Service Identification
+    service:
+      name: trading-service
+      version: "2.0.0"
+      description: "TradeMaster Trading Service"
+      environment: ${ENVIRONMENT:development}
+
+    # Security Configuration
+    security:
+      enabled: true
+      service-api-key: ${SERVICE_API_KEY:trademaster-service-api-key-2024-secure}
+      public-paths:
+        - /actuator/health
+        - /api-docs
+        - /swagger-ui/**
+      internal-paths:
+        - /api/internal/**
+
+    # Kong Gateway Configuration
+    kong:
+      enabled: true
+      headers:
+        consumer-id: X-Consumer-ID
+        consumer-username: X-Consumer-Username
+        api-key: X-API-Key
+
+    # Internal Service Client Configuration
+    internal-client:
+      connection-timeout: 5000
+      read-timeout: 10000
+      max-connections: 100
+      max-connections-per-route: 20
+      circuit-breaker-enabled: true
+      services:
+        portfolio-service:
+          base-url: ${PORTFOLIO_SERVICE_URL:http://localhost:8082}
+          health-check-path: /api/internal/health
+        broker-auth-service:
+          base-url: ${BROKER_AUTH_SERVICE_URL:http://localhost:8087}
+          health-check-path: /api/internal/health
+        event-bus-service:
+          base-url: ${EVENT_BUS_SERVICE_URL:http://localhost:8085}
+          health-check-path: /api/internal/health
+
+  # Service-to-Service Security Configuration (Legacy - kept for backward compatibility)
   security:
     service:
       enabled: ${SERVICE_AUTH_ENABLED:true}
       api-key: ${SERVICE_API_KEY:trademaster-service-api-key-2024-secure}
-      
+
   trading:
     # Order Management Configuration
     orders:
@@ -366,12 +534,6 @@ trademaster:
       heartbeat-interval: 30s
       message-size-limit: 1MB
 
-# JWT Configuration (from Epic 1 auth service)
-jwt:
-  secret: ${JWT_SECRET:your-256-bit-secret-key-here-for-development-only}
-  expiration: 86400000  # 24 hours in milliseconds
-  issuer: trademaster-auth-service
-
 # API Documentation
 springdoc:
   api-docs:
@@ -380,22 +542,30 @@ springdoc:
     path: /swagger-ui.html
     operations-sorter: method
 
-# Consul Service Discovery Configuration has been moved to main spring section above
-
-# Security configuration
+# Security Configuration - Consolidated from common library and service-specific
 security:
+  # JWT Authentication Configuration
   jwt:
     secret: ${JWT_SECRET:your-256-bit-secret-key-here-change-this-in-production}
     expiration: ${JWT_EXPIRATION:86400000} # 24 hours
     refresh-expiration: ${JWT_REFRESH_EXPIRATION:604800000} # 7 days
+    issuer: ${JWT_ISSUER:trademaster-auth-service}
+
+  # CORS Configuration
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:8080}
     allowed-methods: ${CORS_ALLOWED_METHODS:GET,POST,PUT,DELETE,OPTIONS}
     allowed-headers: ${CORS_ALLOWED_HEADERS:*}
+    allow-credentials: ${CORS_ALLOW_CREDENTIALS:true}
+    max-age: ${CORS_MAX_AGE:3600}
+
+  # Security Audit Configuration
   audit:
     enabled: ${SECURITY_AUDIT_ENABLED:true}
     alert:
       threshold: ${SECURITY_ALERT_THRESHOLD:10}
+
+  # Security Hardening
   hardening:
     rate-limit:
       enabled: ${RATE_LIMITING_ENABLED:true}
@@ -406,8 +576,36 @@ security:
       max-request-size: ${MAX_REQUEST_SIZE:1048576} # 1MB
     headers:
       enabled: ${SECURITY_HEADERS_ENABLED:true}
+      # Security headers configuration
+      content-security-policy: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self'"
+      frame-options: DENY
+      content-type-options: nosniff
+      referrer-policy: strict-origin-when-cross-origin
+      require-ssl: ${REQUIRE_SSL:false}
     firewall:
       enabled: ${HTTP_FIREWALL_ENABLED:true}
+
+# TradeMaster Common Library Configuration
+trademaster-common:
+  # HTTP Client Configuration
+  http-client:
+    connection-timeout: ${COMMON_HTTP_CONNECTION_TIMEOUT:3000}
+    read-timeout: ${COMMON_HTTP_READ_TIMEOUT:5000}
+    connection-pool:
+      max-total: ${COMMON_HTTP_POOL_MAX_TOTAL:100}
+      max-per-route: ${COMMON_HTTP_POOL_MAX_PER_ROUTE:50}
+      validate-after-inactivity: ${COMMON_HTTP_POOL_VALIDATE_INACTIVITY:2000}
+
+  # Security Filter Configuration
+  security-filter:
+    enabled: ${COMMON_SECURITY_FILTER_ENABLED:true}
+    order: ${COMMON_SECURITY_FILTER_ORDER:1}
+    excluded-paths: ${COMMON_SECURITY_EXCLUDED_PATHS:/actuator/**,/api-docs/**,/swagger-ui/**}
+
+  # Result/Railway Programming Configuration
+  railway:
+    enable-logging: ${COMMON_RAILWAY_LOGGING:true}
+    log-level: ${COMMON_RAILWAY_LOG_LEVEL:DEBUG}
 
 # Circuit Breaker Configuration
 resilience4j:
@@ -449,6 +647,24 @@ resilience4j:
         wait-duration-in-open-state: 20s
         permitted-number-of-calls-in-half-open-state: 5
         automatic-transition-from-open-to-half-open-enabled: true
+      event-bus-service:
+        register-health-indicator: true
+        sliding-window-type: count_based
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 60
+        wait-duration-in-open-state: 15s
+        permitted-number-of-calls-in-half-open-state: 3
+        automatic-transition-from-open-to-half-open-enabled: true
+      order-execution:
+        register-health-indicator: true
+        sliding-window-type: count_based
+        sliding-window-size: 20
+        minimum-number-of-calls: 10
+        failure-rate-threshold: 30
+        wait-duration-in-open-state: 60s
+        permitted-number-of-calls-in-half-open-state: 5
+        automatic-transition-from-open-to-half-open-enabled: true
   timelimiter:
     instances:
       broker-auth-service:
@@ -459,6 +675,10 @@ resilience4j:
         timeout-duration: 15s
       database-operations:
         timeout-duration: 30s
+      event-bus-service:
+        timeout-duration: 3s
+      order-execution:
+        timeout-duration: 5s
   retry:
     instances:
       broker-auth-service:
@@ -473,6 +693,10 @@ resilience4j:
         max-attempts: 4
         wait-duration: 2s
         exponential-backoff-multiplier: 2
+      event-bus-service:
+        max-attempts: 1
+        wait-duration: 500ms
+        exponential-backoff-multiplier: 1
   bulkhead:
     instances:
       order-processing:
@@ -529,13 +753,13 @@ spring:
   config:
     activate:
       on-profile: production
-  security:
-    require-ssl: true
+
+# Production Security Configuration (overrides default)
+security:
+  hardening:
     headers:
+      require-ssl: true
       content-security-policy: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: https:; connect-src 'self' wss: https:"
-      frame-options: DENY
-      content-type-options: nosniff
-      referrer-policy: strict-origin-when-cross-origin
 
 server:
   ssl:

@@ -21,6 +21,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -137,42 +138,43 @@ public class SecurityHardeningConfig {
     }
     
     /**
-     * Custom security headers filter implementation
+     * Custom security headers filter implementation - eliminates if-statements with functional patterns
      */
     public static class SecurityHeadersFilter extends OncePerRequestFilter {
-        
+
         @Override
-        protected void doFilterInternal(HttpServletRequest request, 
-                                      HttpServletResponse response, 
-                                      FilterChain filterChain) 
+        protected void doFilterInternal(HttpServletRequest request,
+                                      HttpServletResponse response,
+                                      FilterChain filterChain)
                 throws ServletException, IOException {
-            
+
             // Add comprehensive security headers
             response.setHeader("X-Content-Type-Options", "nosniff");
             response.setHeader("X-Frame-Options", "DENY");
             response.setHeader("X-XSS-Protection", "1; mode=block");
             response.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
-            response.setHeader("Permissions-Policy", 
+            response.setHeader("Permissions-Policy",
                 "geolocation=(), microphone=(), camera=(), payment=(), usb=()");
-            
-            // Content Security Policy for API responses
-            if (request.getRequestURI().startsWith("/api/")) {
-                response.setHeader("Content-Security-Policy", 
-                    "default-src 'none'; frame-ancestors 'none'; base-uri 'none'");
-            }
-            
-            // Cache control for sensitive endpoints
-            if (request.getRequestURI().contains("/orders") || 
-                request.getRequestURI().contains("/portfolio")) {
-                response.setHeader("Cache-Control", 
-                    "no-cache, no-store, must-revalidate, private");
-                response.setHeader("Pragma", "no-cache");
-                response.setHeader("Expires", "0");
-            }
-            
+
+            // Content Security Policy for API responses - eliminates if-statement with Optional
+            Optional.of(request.getRequestURI())
+                .filter(uri -> uri.startsWith("/api/"))
+                .ifPresent(uri -> response.setHeader("Content-Security-Policy",
+                    "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"));
+
+            // Cache control for sensitive endpoints - eliminates if-statement with Optional
+            Optional.of(request.getRequestURI())
+                .filter(uri -> uri.contains("/orders") || uri.contains("/portfolio"))
+                .ifPresent(uri -> {
+                    response.setHeader("Cache-Control",
+                        "no-cache, no-store, must-revalidate, private");
+                    response.setHeader("Pragma", "no-cache");
+                    response.setHeader("Expires", "0");
+                });
+
             // Server header obfuscation
             response.setHeader("Server", "TradeMaster/2.0");
-            
+
             filterChain.doFilter(request, response);
         }
     }
@@ -195,100 +197,173 @@ public class SecurityHardeningConfig {
         };
         
         @Override
-        protected void doFilterInternal(HttpServletRequest request, 
-                                      HttpServletResponse response, 
-                                      FilterChain filterChain) 
+        protected void doFilterInternal(HttpServletRequest request,
+                                      HttpServletResponse response,
+                                      FilterChain filterChain)
                 throws ServletException, IOException {
-            
-            // Validate request parameters
-            if (containsSuspiciousContent(request)) {
-                log.warn("Suspicious request blocked from IP: {} - URI: {} - User-Agent: {}", 
-                    getClientIP(request), request.getRequestURI(), 
-                    request.getHeader("User-Agent"));
-                
-                response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
-                response.getWriter().write("{\"error\":\"INVALID_REQUEST\",\"message\":\"Request contains invalid content\"}");
-                return;
-            }
-            
-            // Validate Content-Type for POST/PUT requests
-            if (("POST".equals(request.getMethod()) || "PUT".equals(request.getMethod())) &&
-                request.getRequestURI().startsWith("/api/")) {
-                
-                String contentType = request.getContentType();
-                if (contentType == null || !contentType.startsWith("application/json")) {
-                    log.warn("Invalid content-type from IP: {} - Content-Type: {}", 
-                        getClientIP(request), contentType);
-                    
-                    response.setStatus(HttpServletResponse.SC_UNSUPPORTED_MEDIA_TYPE);
-                    response.getWriter().write("{\"error\":\"INVALID_CONTENT_TYPE\",\"message\":\"Only application/json is supported\"}");
-                    return;
-                }
-            }
-            
-            // Check request size limits
-            if (request.getContentLengthLong() > 1024 * 1024) { // 1MB limit
-                log.warn("Request too large from IP: {} - Size: {} bytes", 
-                    getClientIP(request), request.getContentLengthLong());
-                
-                response.setStatus(HttpServletResponse.SC_REQUEST_ENTITY_TOO_LARGE);
-                response.getWriter().write("{\"error\":\"REQUEST_TOO_LARGE\",\"message\":\"Request exceeds maximum size limit\"}");
-                return;
-            }
-            
-            filterChain.doFilter(request, response);
-        }
-        
-        private boolean containsSuspiciousContent(HttpServletRequest request) {
-            // Check query parameters
-            if (request.getQueryString() != null) {
-                String query = request.getQueryString().toLowerCase();
-                for (String pattern : DANGEROUS_PATTERNS) {
-                    if (query.contains(pattern.toLowerCase())) {
-                        return true;
-                    }
-                }
-            }
-            
-            // Check headers
-            String userAgent = request.getHeader("User-Agent");
-            if (userAgent != null) {
-                String lowerUserAgent = userAgent.toLowerCase();
-                for (String pattern : DANGEROUS_PATTERNS) {
-                    if (lowerUserAgent.contains(pattern.toLowerCase())) {
-                        return true;
-                    }
-                }
-            }
-            
-            // Check for SQL injection patterns in parameters
-            request.getParameterNames().asIterator().forEachRemaining(paramName -> {
-                String paramValue = request.getParameter(paramName);
-                if (paramValue != null) {
-                    String lowerValue = paramValue.toLowerCase();
-                    for (String pattern : DANGEROUS_PATTERNS) {
-                        if (lowerValue.contains(pattern.toLowerCase())) {
-                            log.warn("Suspicious parameter detected: {} = {}", paramName, paramValue);
+
+            // Validate request parameters - eliminates if-statement with Optional
+            Optional.of(request)
+                .filter(this::containsSuspiciousContent)
+                .ifPresentOrElse(
+                    req -> {
+                        log.warn("Suspicious request blocked from IP: {} - URI: {} - User-Agent: {}",
+                            getClientIP(req), req.getRequestURI(),
+                            req.getHeader("User-Agent"));
+
+                        response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+                        try {
+                            response.getWriter().write("{\"error\":\"INVALID_REQUEST\",\"message\":\"Request contains invalid content\"}");
+                        } catch (IOException e) {
+                            log.error("Failed to write response", e);
+                        }
+                    },
+                    () -> {
+                        try {
+                            // Validate Content-Type for POST/PUT requests - eliminates nested if-statements
+                            validateContentTypeAndProcessRequest(request, response, filterChain);
+                        } catch (ServletException | IOException e) {
+                            log.error("Filter processing failed", e);
                         }
                     }
-                }
-            });
-            
-            return false;
+                );
+        }
+
+        /**
+         * Validate content type and process request - eliminates if-statements
+         */
+        private void validateContentTypeAndProcessRequest(HttpServletRequest request,
+                                                          HttpServletResponse response,
+                                                          FilterChain filterChain)
+                throws ServletException, IOException {
+
+            // Check if POST/PUT API request - eliminates if-statement with functional pattern
+            Optional.of(request.getMethod())
+                .filter(method -> "POST".equals(method) || "PUT".equals(method))
+                .filter(method -> request.getRequestURI().startsWith("/api/"))
+                .ifPresentOrElse(
+                    method -> {
+                        // Validate content type - eliminates if-statement with Optional
+                        Optional.ofNullable(request.getContentType())
+                            .filter(ct -> ct.startsWith("application/json"))
+                            .ifPresentOrElse(
+                                ct -> {
+                                    try {
+                                        validateRequestSizeAndContinue(request, response, filterChain);
+                                    } catch (ServletException | IOException e) {
+                                        log.error("Request size validation failed", e);
+                                    }
+                                },
+                                () -> {
+                                    log.warn("Invalid content-type from IP: {} - Content-Type: {}",
+                                        getClientIP(request), request.getContentType());
+
+                                    response.setStatus(HttpServletResponse.SC_UNSUPPORTED_MEDIA_TYPE);
+                                    try {
+                                        response.getWriter().write("{\"error\":\"INVALID_CONTENT_TYPE\",\"message\":\"Only application/json is supported\"}");
+                                    } catch (IOException e) {
+                                        log.error("Failed to write response", e);
+                                    }
+                                }
+                            );
+                    },
+                    () -> {
+                        try {
+                            validateRequestSizeAndContinue(request, response, filterChain);
+                        } catch (ServletException | IOException e) {
+                            log.error("Request processing failed", e);
+                        }
+                    }
+                );
+        }
+
+        /**
+         * Validate request size and continue filter chain - eliminates if-statement
+         */
+        private void validateRequestSizeAndContinue(HttpServletRequest request,
+                                                    HttpServletResponse response,
+                                                    FilterChain filterChain)
+                throws ServletException, IOException {
+
+            // Check request size limits - eliminates if-statement with Optional
+            Optional.of(request.getContentLengthLong())
+                .filter(size -> size > 1024 * 1024) // 1MB limit
+                .ifPresentOrElse(
+                    size -> {
+                        log.warn("Request too large from IP: {} - Size: {} bytes",
+                            getClientIP(request), size);
+
+                        response.setStatus(HttpServletResponse.SC_REQUEST_ENTITY_TOO_LARGE);
+                        try {
+                            response.getWriter().write("{\"error\":\"REQUEST_TOO_LARGE\",\"message\":\"Request exceeds maximum size limit\"}");
+                        } catch (IOException e) {
+                            log.error("Failed to write response", e);
+                        }
+                    },
+                    () -> {
+                        try {
+                            filterChain.doFilter(request, response);
+                        } catch (ServletException | IOException e) {
+                            log.error("Filter chain processing failed", e);
+                        }
+                    }
+                );
         }
         
+        /**
+         * Check for suspicious content - eliminates if-statements and for loops with Stream API
+         */
+        private boolean containsSuspiciousContent(HttpServletRequest request) {
+            // Check query parameters - eliminates if-statement and for loop with Stream API
+            boolean suspiciousQuery = Optional.ofNullable(request.getQueryString())
+                .map(String::toLowerCase)
+                .map(query -> java.util.Arrays.stream(DANGEROUS_PATTERNS)
+                    .map(String::toLowerCase)
+                    .anyMatch(query::contains))
+                .orElse(false);
+
+            // Check headers - eliminates if-statement and for loop with Stream API
+            boolean suspiciousUserAgent = Optional.ofNullable(request.getHeader("User-Agent"))
+                .map(String::toLowerCase)
+                .map(userAgent -> java.util.Arrays.stream(DANGEROUS_PATTERNS)
+                    .map(String::toLowerCase)
+                    .anyMatch(userAgent::contains))
+                .orElse(false);
+
+            // Check for SQL injection patterns in parameters - eliminates if-statement and for loops with Stream API
+            java.util.stream.StreamSupport.stream(
+                java.util.Spliterators.spliteratorUnknownSize(
+                    request.getParameterNames().asIterator(),
+                    java.util.Spliterator.ORDERED
+                ),
+                false
+            )
+            .forEach(paramName ->
+                Optional.ofNullable(request.getParameter(paramName))
+                    .map(String::toLowerCase)
+                    .ifPresent(lowerValue ->
+                        java.util.Arrays.stream(DANGEROUS_PATTERNS)
+                            .map(String::toLowerCase)
+                            .filter(lowerValue::contains)
+                            .findFirst()
+                            .ifPresent(pattern -> log.warn("Suspicious parameter detected: {} = {}",
+                                paramName, request.getParameter(paramName)))
+                    )
+            );
+
+            return suspiciousQuery || suspiciousUserAgent;
+        }
+        
+        /**
+         * Get client IP address - eliminates if-statements with Optional chain
+         */
         private String getClientIP(HttpServletRequest request) {
-            String xForwardedFor = request.getHeader("X-Forwarded-For");
-            if (xForwardedFor != null && !xForwardedFor.isEmpty()) {
-                return xForwardedFor.split(",")[0].trim();
-            }
-            
-            String xRealIP = request.getHeader("X-Real-IP");
-            if (xRealIP != null && !xRealIP.isEmpty()) {
-                return xRealIP;
-            }
-            
-            return request.getRemoteAddr();
+            return Optional.ofNullable(request.getHeader("X-Forwarded-For"))
+                .filter(header -> !header.isEmpty())
+                .map(header -> header.split(",")[0].trim())
+                .or(() -> Optional.ofNullable(request.getHeader("X-Real-IP"))
+                    .filter(header -> !header.isEmpty()))
+                .orElse(request.getRemoteAddr());
         }
     }
     
@@ -322,52 +397,72 @@ public class SecurityHardeningConfig {
         private static final long WINDOW_SIZE_MS = 60_000; // 1 minute
         
         @Override
-        protected void doFilterInternal(HttpServletRequest request, 
-                                      HttpServletResponse response, 
-                                      FilterChain filterChain) 
+        protected void doFilterInternal(HttpServletRequest request,
+                                      HttpServletResponse response,
+                                      FilterChain filterChain)
                 throws ServletException, IOException {
-            
+
             String clientIP = getClientIP(request);
             long currentTime = System.currentTimeMillis();
-            
-            // Reset counters if window has expired
-            Long lastReset = lastResetTime.get(clientIP);
-            if (lastReset == null || (currentTime - lastReset) > WINDOW_SIZE_MS) {
-                requestCounts.put(clientIP, new java.util.concurrent.atomic.AtomicInteger(0));
-                lastResetTime.put(clientIP, currentTime);
-            }
-            
-            // Check rate limit
+
+            // Reset counters if window has expired - eliminates if-statement with Optional
+            Optional.ofNullable(lastResetTime.get(clientIP))
+                .filter(lastReset -> (currentTime - lastReset) <= WINDOW_SIZE_MS)
+                .ifPresentOrElse(
+                    lastReset -> {}, // Window still active, do nothing
+                    () -> {
+                        requestCounts.put(clientIP, new java.util.concurrent.atomic.AtomicInteger(0));
+                        lastResetTime.put(clientIP, currentTime);
+                    }
+                );
+
+            // Check rate limit - eliminates if-statement with Optional
             java.util.concurrent.atomic.AtomicInteger count = requestCounts.get(clientIP);
-            if (count != null && count.incrementAndGet() > MAX_REQUESTS_PER_MINUTE) {
-                log.warn("Rate limit exceeded for IP: {} - Count: {}", clientIP, count.get());
-                
-                response.setStatus(429); // Too Many Requests
-                response.setHeader("X-RateLimit-Limit", String.valueOf(MAX_REQUESTS_PER_MINUTE));
-                response.setHeader("X-RateLimit-Remaining", "0");
-                response.setHeader("X-RateLimit-Reset", String.valueOf((lastResetTime.get(clientIP) + WINDOW_SIZE_MS) / 1000));
-                response.getWriter().write("{\"error\":\"RATE_LIMITED\",\"message\":\"Too many requests\"}");
-                return;
-            }
-            
-            // Add rate limit headers
-            if (count != null) {
-                response.setHeader("X-RateLimit-Limit", String.valueOf(MAX_REQUESTS_PER_MINUTE));
-                response.setHeader("X-RateLimit-Remaining", 
-                    String.valueOf(Math.max(0, MAX_REQUESTS_PER_MINUTE - count.get())));
-                response.setHeader("X-RateLimit-Reset", 
-                    String.valueOf((lastResetTime.get(clientIP) + WINDOW_SIZE_MS) / 1000));
-            }
-            
-            filterChain.doFilter(request, response);
+            Optional.ofNullable(count)
+                .filter(c -> c.incrementAndGet() > MAX_REQUESTS_PER_MINUTE)
+                .ifPresentOrElse(
+                    c -> {
+                        log.warn("Rate limit exceeded for IP: {} - Count: {}", clientIP, c.get());
+
+                        response.setStatus(429); // Too Many Requests
+                        response.setHeader("X-RateLimit-Limit", String.valueOf(MAX_REQUESTS_PER_MINUTE));
+                        response.setHeader("X-RateLimit-Remaining", "0");
+                        response.setHeader("X-RateLimit-Reset",
+                            String.valueOf((lastResetTime.get(clientIP) + WINDOW_SIZE_MS) / 1000));
+                        try {
+                            response.getWriter().write("{\"error\":\"RATE_LIMITED\",\"message\":\"Too many requests\"}");
+                        } catch (IOException e) {
+                            log.error("Failed to write rate limit response", e);
+                        }
+                    },
+                    () -> {
+                        try {
+                            // Add rate limit headers - eliminates if-statement with Optional
+                            Optional.ofNullable(count)
+                                .ifPresent(c -> {
+                                    response.setHeader("X-RateLimit-Limit", String.valueOf(MAX_REQUESTS_PER_MINUTE));
+                                    response.setHeader("X-RateLimit-Remaining",
+                                        String.valueOf(Math.max(0, MAX_REQUESTS_PER_MINUTE - c.get())));
+                                    response.setHeader("X-RateLimit-Reset",
+                                        String.valueOf((lastResetTime.get(clientIP) + WINDOW_SIZE_MS) / 1000));
+                                });
+
+                            filterChain.doFilter(request, response);
+                        } catch (ServletException | IOException e) {
+                            log.error("Filter chain processing failed", e);
+                        }
+                    }
+                );
         }
         
+        /**
+         * Get client IP address - eliminates if-statements with Optional chain
+         */
         private String getClientIP(HttpServletRequest request) {
-            String xForwardedFor = request.getHeader("X-Forwarded-For");
-            if (xForwardedFor != null && !xForwardedFor.isEmpty()) {
-                return xForwardedFor.split(",")[0].trim();
-            }
-            return request.getRemoteAddr();
+            return Optional.ofNullable(request.getHeader("X-Forwarded-For"))
+                .filter(header -> !header.isEmpty())
+                .map(header -> header.split(",")[0].trim())
+                .orElse(request.getRemoteAddr());
         }
     }
 }

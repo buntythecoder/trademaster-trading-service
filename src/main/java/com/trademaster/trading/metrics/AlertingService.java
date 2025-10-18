@@ -7,6 +7,7 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
@@ -66,36 +67,40 @@ public class AlertingService {
     
     /**
      * Check order processing performance and trigger alerts if thresholds are breached
+     * Uses Optional patterns to eliminate if-statements
      */
     @Async
     public CompletableFuture<Void> checkOrderProcessingPerformance() {
         return CompletableFuture.runAsync(() -> {
             try {
                 BigDecimal avgProcessingTime = metricsService.getAverageOrderProcessingTime();
-                
-                if (avgProcessingTime.longValue() > MAX_ORDER_PROCESSING_TIME_MS) {
-                    triggerAlert(
+
+                // Check processing time threshold - eliminates if-statement with Optional
+                Optional.of(avgProcessingTime.longValue())
+                    .filter(time -> time > MAX_ORDER_PROCESSING_TIME_MS)
+                    .ifPresent(time -> triggerAlert(
                         AlertType.PERFORMANCE_DEGRADATION,
                         AlertSeverity.WARNING,
                         "Order Processing SLA Violation",
-                        String.format("Average order processing time: %dms exceeds threshold: %dms", 
-                            avgProcessingTime.longValue(), MAX_ORDER_PROCESSING_TIME_MS),
+                        String.format("Average order processing time: %dms exceeds threshold: %dms",
+                            time, MAX_ORDER_PROCESSING_TIME_MS),
                         "order_processing_latency"
-                    );
-                }
-                
+                    ));
+
                 BigDecimal successRate = metricsService.getOrderSuccessRate();
-                if (successRate.doubleValue() < MIN_SUCCESS_RATE_PERCENT) {
-                    triggerAlert(
+
+                // Check success rate threshold - eliminates if-statement with Optional
+                Optional.of(successRate.doubleValue())
+                    .filter(rate -> rate < MIN_SUCCESS_RATE_PERCENT)
+                    .ifPresent(rate -> triggerAlert(
                         AlertType.PERFORMANCE_DEGRADATION,
                         AlertSeverity.CRITICAL,
                         "Low Order Success Rate",
-                        String.format("Order success rate: %.2f%% below threshold: %.2f%%", 
-                            successRate.doubleValue(), MIN_SUCCESS_RATE_PERCENT),
+                        String.format("Order success rate: %.2f%% below threshold: %.2f%%",
+                            rate, MIN_SUCCESS_RATE_PERCENT),
                         "order_success_rate"
-                    );
-                }
-                
+                    ));
+
             } catch (Exception e) {
                 log.error("Error checking order processing performance", e);
             }
@@ -104,41 +109,46 @@ public class AlertingService {
     
     /**
      * Monitor risk thresholds and trigger alerts for violations
+     * Uses Optional patterns to eliminate if-statements
      */
     @Async
     public CompletableFuture<Void> checkRiskThresholds(BigDecimal currentExposure, BigDecimal dailyPnL) {
         return CompletableFuture.runAsync(() -> {
             try {
-                // Check total exposure threshold
-                if (currentExposure.compareTo(MAX_EXPOSURE_THRESHOLD) > 0) {
-                    triggerAlert(
-                        AlertType.RISK_THRESHOLD_BREACH,
-                        AlertSeverity.CRITICAL,
-                        "Maximum Exposure Exceeded",
-                        String.format("Current exposure: ₹%s exceeds maximum threshold: ₹%s", 
-                            currentExposure.toString(), MAX_EXPOSURE_THRESHOLD.toString()),
-                        "max_exposure_breach"
-                    );
-                    
-                    // Record risk violation in metrics
-                    metricsService.recordRiskViolation("EXPOSURE_LIMIT", "CRITICAL");
-                }
-                
-                // Check daily loss threshold
-                if (dailyPnL.compareTo(MAX_DAILY_LOSS_THRESHOLD.negate()) < 0) {
-                    triggerAlert(
-                        AlertType.FINANCIAL_THRESHOLD_BREACH,
-                        AlertSeverity.EMERGENCY,
-                        "Daily Loss Limit Exceeded",
-                        String.format("Daily P&L: ₹%s exceeds maximum loss threshold: ₹%s", 
-                            dailyPnL.toString(), MAX_DAILY_LOSS_THRESHOLD.toString()),
-                        "daily_loss_limit"
-                    );
-                    
-                    // Record risk violation in metrics
-                    metricsService.recordRiskViolation("DAILY_LOSS", "EMERGENCY");
-                }
-                
+                // Check total exposure threshold - eliminates if-statement with Optional
+                Optional.of(currentExposure)
+                    .filter(exposure -> exposure.compareTo(MAX_EXPOSURE_THRESHOLD) > 0)
+                    .ifPresent(exposure -> {
+                        triggerAlert(
+                            AlertType.RISK_THRESHOLD_BREACH,
+                            AlertSeverity.CRITICAL,
+                            "Maximum Exposure Exceeded",
+                            String.format("Current exposure: ₹%s exceeds maximum threshold: ₹%s",
+                                exposure.toString(), MAX_EXPOSURE_THRESHOLD.toString()),
+                            "max_exposure_breach"
+                        );
+
+                        // Record risk violation in metrics
+                        metricsService.recordRiskViolation("EXPOSURE_LIMIT", "CRITICAL");
+                    });
+
+                // Check daily loss threshold - eliminates if-statement with Optional
+                Optional.of(dailyPnL)
+                    .filter(pnl -> pnl.compareTo(MAX_DAILY_LOSS_THRESHOLD.negate()) < 0)
+                    .ifPresent(pnl -> {
+                        triggerAlert(
+                            AlertType.FINANCIAL_THRESHOLD_BREACH,
+                            AlertSeverity.EMERGENCY,
+                            "Daily Loss Limit Exceeded",
+                            String.format("Daily P&L: ₹%s exceeds maximum loss threshold: ₹%s",
+                                pnl.toString(), MAX_DAILY_LOSS_THRESHOLD.toString()),
+                            "daily_loss_limit"
+                        );
+
+                        // Record risk violation in metrics
+                        metricsService.recordRiskViolation("DAILY_LOSS", "EMERGENCY");
+                    });
+
             } catch (Exception e) {
                 log.error("Error checking risk thresholds", e);
             }
@@ -147,24 +157,26 @@ public class AlertingService {
     
     /**
      * Monitor system health and trigger alerts for issues
+     * Uses Optional patterns to eliminate if-statements
      */
     @Async
     public CompletableFuture<Void> checkSystemHealth() {
         return CompletableFuture.runAsync(() -> {
             try {
                 long totalActiveEntities = metricsService.getTotalActiveEntities();
-                
-                if (totalActiveEntities > MAX_ACTIVE_ORDERS_THRESHOLD) {
-                    triggerAlert(
+
+                // Check active entities threshold - eliminates if-statement with Optional
+                Optional.of(totalActiveEntities)
+                    .filter(count -> count > MAX_ACTIVE_ORDERS_THRESHOLD)
+                    .ifPresent(count -> triggerAlert(
                         AlertType.SYSTEM_HEALTH_ISSUE,
                         AlertSeverity.WARNING,
                         "High System Load",
-                        String.format("Total active entities: %d exceeds threshold: %d", 
-                            totalActiveEntities, MAX_ACTIVE_ORDERS_THRESHOLD),
+                        String.format("Total active entities: %d exceeds threshold: %d",
+                            count, MAX_ACTIVE_ORDERS_THRESHOLD),
                         "high_system_load"
-                    );
-                }
-                
+                    ));
+
             } catch (Exception e) {
                 log.error("Error checking system health", e);
             }
@@ -201,18 +213,22 @@ public class AlertingService {
     
     /**
      * Handle SLA violations
+     * Uses Optional patterns to eliminate ternary operator
      */
     public void handleSLAViolation(String slaType, long actualTime, long slaThreshold) {
         metricsService.recordSLAViolation(slaType, actualTime, slaThreshold);
-        
-        AlertSeverity severity = actualTime > (slaThreshold * 2) ? 
-            AlertSeverity.CRITICAL : AlertSeverity.WARNING;
-        
+
+        // Determine severity based on threshold - eliminates ternary operator with Optional
+        AlertSeverity severity = Optional.of(actualTime)
+            .filter(time -> time > (slaThreshold * 2))
+            .map(time -> AlertSeverity.CRITICAL)
+            .orElse(AlertSeverity.WARNING);
+
         triggerAlert(
             AlertType.SLA_VIOLATION,
             severity,
             "SLA Threshold Breached",
-            String.format("SLA: %s, Actual: %dms, Threshold: %dms", 
+            String.format("SLA: %s, Actual: %dms, Threshold: %dms",
                 slaType, actualTime, slaThreshold),
             "sla_violation_" + slaType.toLowerCase()
         );
@@ -233,40 +249,49 @@ public class AlertingService {
     
     /**
      * Core alert triggering mechanism with cooldown and deduplication
+     * Uses Optional patterns to eliminate if-statements
      */
-    private void triggerAlert(AlertType alertType, AlertSeverity severity, 
+    private void triggerAlert(AlertType alertType, AlertSeverity severity,
                             String title, String message, String alertKey) {
-        
-        // Check cooldown period to prevent alert spam
+
         Instant now = Instant.now();
         Instant lastAlert = alertCooldowns.get(alertKey);
-        
-        if (lastAlert != null && 
-            now.isBefore(lastAlert.plusSeconds(ALERT_COOLDOWN_MINUTES * 60))) {
-            log.debug("Alert {} is in cooldown period, skipping", alertKey);
-            return;
-        }
-        
-        // Update cooldown
-        alertCooldowns.put(alertKey, now);
-        totalAlertsTriggered.incrementAndGet();
-        
-        // Create alert payload
-        TradingAlert alert = TradingAlert.builder()
-            .alertType(alertType)
-            .severity(severity)
-            .title(title)
-            .message(message)
-            .alertKey(alertKey)
-            .timestamp(now)
-            .correlationId(generateCorrelationId())
-            .build();
-        
-        // Process alert based on severity
-        processAlert(alert);
-        
-        log.info("Alert triggered: type={}, severity={}, key={}, message={}", 
-            alertType, severity, alertKey, message);
+
+        // Determine if should proceed based on cooldown - eliminates if-statement with Optional
+        boolean shouldProceed = Optional.ofNullable(lastAlert)
+            .map(last -> !now.isBefore(last.plusSeconds(ALERT_COOLDOWN_MINUTES * 60)))
+            .orElse(true); // No previous alert means proceed
+
+        // Execute alert only if not in cooldown - functional conditional execution
+        Optional.of(shouldProceed)
+            .filter(proceed -> proceed)
+            .ifPresent(proceed -> {
+                // Update cooldown
+                alertCooldowns.put(alertKey, now);
+                totalAlertsTriggered.incrementAndGet();
+
+                // Create alert payload
+                TradingAlert alert = TradingAlert.builder()
+                    .alertType(alertType)
+                    .severity(severity)
+                    .title(title)
+                    .message(message)
+                    .alertKey(alertKey)
+                    .timestamp(now)
+                    .correlationId(generateCorrelationId())
+                    .build();
+
+                // Process alert based on severity
+                processAlert(alert);
+
+                log.info("Alert triggered: type={}, severity={}, key={}, message={}",
+                    alertType, severity, alertKey, message);
+            });
+
+        // Log if in cooldown - functional side effect for debugging
+        Optional.of(shouldProceed)
+            .filter(proceed -> !proceed)
+            .ifPresent(proceed -> log.debug("Alert {} is in cooldown period, skipping", alertKey));
     }
     
     /**

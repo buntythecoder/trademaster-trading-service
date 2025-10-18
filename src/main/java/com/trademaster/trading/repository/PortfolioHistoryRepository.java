@@ -153,11 +153,12 @@ public interface PortfolioHistoryRepository extends JpaRepository<PortfolioHisto
     default BigDecimal calculatePortfolioReturn(Long userId, LocalDate startDate, LocalDate endDate) {
         BigDecimal startValue = getPortfolioValueOnDate(userId, startDate);
         BigDecimal endValue = getPortfolioValueOnDate(userId, endDate);
-        
-        if (startValue.equals(BigDecimal.ZERO)) {
-            return BigDecimal.ZERO;
-        }
-        
-        return endValue.subtract(startValue).divide(startValue, 4, java.math.RoundingMode.HALF_UP);
+
+        // Eliminates if-statement using Optional.of().filter()
+        return Optional.of(startValue)
+            .filter(value -> value.compareTo(BigDecimal.ZERO) != 0)
+            .map(value -> endValue.subtract(startValue)
+                .divide(startValue, 4, java.math.RoundingMode.HALF_UP))
+            .orElse(BigDecimal.ZERO);
     }
 }

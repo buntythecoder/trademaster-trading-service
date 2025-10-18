@@ -10,6 +10,8 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Comparator;
 
 /**
  * Execution Report DTO
@@ -329,87 +331,84 @@ public class ExecutionReport {
      */
     
     /**
-     * Get overall execution grade
+     * Get overall execution grade - eliminates if-statement with Optional
      */
     public String getOverallGrade() {
-        if (performance != null && performance.getPerformanceGrade() != null) {
-            return performance.getPerformanceGrade();
-        }
-        return "N/A";
-    }
-    
-    /**
-     * Check if performance is improving
-     */
-    public boolean isPerformanceImproving() {
-        if (trends == null) return false;
-        
-        long improvingTrends = trends.stream()
-            .filter(trend -> "IMPROVING".equals(trend.getTrendDirection()))
-            .count();
-        
-        return improvingTrends > trends.size() / 2; // Majority improving
-    }
-    
-    /**
-     * Get top recommendation by priority
-     */
-    public List<Recommendation> getHighPriorityRecommendations() {
-        if (recommendations == null) return List.of();
-        
-        return recommendations.stream()
-            .filter(rec -> "HIGH".equals(rec.getPriority()))
-            .toList();
-    }
-    
-    /**
-     * Get best performing venue
-     */
-    public String getBestVenue() {
-        if (venuePerformance == null || venuePerformance.isEmpty()) {
-            return "N/A";
-        }
-        
-        return venuePerformance.stream()
-            .max((v1, v2) -> {
-                if (v1.getExecutionQuality() == null) return -1;
-                if (v2.getExecutionQuality() == null) return 1;
-                return v1.getExecutionQuality().compareTo(v2.getExecutionQuality());
-            })
-            .map(VenuePerformance::getVenueName)
+        return Optional.ofNullable(performance)
+            .flatMap(perf -> Optional.ofNullable(perf.getPerformanceGrade()))
             .orElse("N/A");
     }
     
     /**
-     * Calculate total cost savings
+     * Check if performance is improving - eliminates if-statement with Optional
      */
-    public BigDecimal getTotalCostSavings() {
-        if (costAnalysis != null && costAnalysis.getCostSavingsVsBenchmark() != null) {
-            return costAnalysis.getCostSavingsVsBenchmark();
-        }
-        return BigDecimal.ZERO;
+    public boolean isPerformanceImproving() {
+        return Optional.ofNullable(trends)
+            .map(trendList -> {
+                long improvingTrends = trendList.stream()
+                    .filter(trend -> "IMPROVING".equals(trend.getTrendDirection()))
+                    .count();
+                return improvingTrends > trendList.size() / 2; // Majority improving
+            })
+            .orElse(false);
     }
     
     /**
-     * Get report summary for dashboard
+     * Get top recommendation by priority - eliminates if-statement with Optional
+     */
+    public List<Recommendation> getHighPriorityRecommendations() {
+        return Optional.ofNullable(recommendations)
+            .map(recList -> recList.stream()
+                .filter(rec -> "HIGH".equals(rec.getPriority()))
+                .toList())
+            .orElse(List.of());
+    }
+    
+    /**
+     * Get best performing venue - eliminates if-statements with Optional and Comparator.nullsLast()
+     */
+    public String getBestVenue() {
+        return Optional.ofNullable(venuePerformance)
+            .filter(vp -> !vp.isEmpty())
+            .flatMap(venueList -> venueList.stream()
+                .max(Comparator.comparing(VenuePerformance::getExecutionQuality,
+                                         Comparator.nullsLast(Comparator.naturalOrder())))
+                .map(VenuePerformance::getVenueName))
+            .orElse("N/A");
+    }
+    
+    /**
+     * Calculate total cost savings - eliminates if-statement with Optional
+     */
+    public BigDecimal getTotalCostSavings() {
+        return Optional.ofNullable(costAnalysis)
+            .flatMap(analysis -> Optional.ofNullable(analysis.getCostSavingsVsBenchmark()))
+            .orElse(BigDecimal.ZERO);
+    }
+    
+    /**
+     * Get report summary for dashboard - eliminates ternary operators with Optional
      */
     public Map<String, Object> getReportSummary() {
-        Map<String, Object> summary = new java.util.HashMap<>();
-        summary.put("reportId", reportId != null ? reportId : "N/A");
-        summary.put("reportType", reportType != null ? reportType : "UNKNOWN");
-        summary.put("overallGrade", getOverallGrade());
-        summary.put("totalOrders", this.summary != null && this.summary.getTotalOrders() != null ? 
-                   this.summary.getTotalOrders() : 0);
-        summary.put("overallFillRate", this.summary != null && this.summary.getOverallFillRate() != null ? 
-                    this.summary.getOverallFillRate() : BigDecimal.ZERO);
-        summary.put("executionQuality", this.summary != null && this.summary.getExecutionQuality() != null ? 
-                   this.summary.getExecutionQuality() : "UNKNOWN");
-        summary.put("bestVenue", getBestVenue());
-        summary.put("totalSavings", getTotalCostSavings());
-        summary.put("isImproving", isPerformanceImproving());
-        summary.put("highPriorityRecommendations", getHighPriorityRecommendations().size());
-        summary.put("generatedAt", generatedAt != null ? generatedAt : Instant.EPOCH);
-        return java.util.Collections.unmodifiableMap(summary);
+        Map<String, Object> summaryMap = new java.util.HashMap<>();
+        summaryMap.put("reportId", Optional.ofNullable(reportId).orElse("N/A"));
+        summaryMap.put("reportType", Optional.ofNullable(reportType).orElse("UNKNOWN"));
+        summaryMap.put("overallGrade", getOverallGrade());
+        summaryMap.put("totalOrders", Optional.ofNullable(this.summary)
+            .flatMap(s -> Optional.ofNullable(s.getTotalOrders()))
+            .orElse(0));
+        summaryMap.put("overallFillRate", Optional.ofNullable(this.summary)
+            .flatMap(s -> Optional.ofNullable(s.getOverallFillRate()))
+            .orElse(BigDecimal.ZERO));
+        summaryMap.put("executionQuality", Optional.ofNullable(this.summary)
+            .flatMap(s -> Optional.ofNullable(s.getExecutionQuality()))
+            .orElse("UNKNOWN"));
+        summaryMap.put("bestVenue", getBestVenue());
+        summaryMap.put("totalSavings", getTotalCostSavings());
+        summaryMap.put("isImproving", isPerformanceImproving());
+        summaryMap.put("highPriorityRecommendations", getHighPriorityRecommendations().size());
+        summaryMap.put("generatedAt", Optional.ofNullable(generatedAt).orElse(Instant.EPOCH));
+        return java.util.Collections.unmodifiableMap(summaryMap);
     }
     
     /**

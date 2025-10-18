@@ -11,8 +11,11 @@ import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 
 import java.time.Instant;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Broker Connectivity Health Indicator
@@ -46,34 +49,45 @@ public class BrokerConnectivityHealthIndicator implements HealthIndicator {
         
         try {
             long startTime = System.currentTimeMillis();
-            boolean allBrokersHealthy = true;
-            int healthyBrokers = 0;
+            AtomicBoolean allBrokersHealthy = new AtomicBoolean(true);
+            AtomicInteger healthyBrokers = new AtomicInteger(0);
             int totalBrokers = TEST_BROKERS.length;
-            
+
             // Test each broker's health
             for (String brokerName : TEST_BROKERS) {
                 boolean brokerHealthy = checkBrokerHealth(brokerName);
-                builder.withDetail("broker_" + brokerName.toLowerCase(), brokerHealthy ? "UP" : "DOWN");
-                
-                if (brokerHealthy) {
-                    healthyBrokers++;
-                } else {
-                    allBrokersHealthy = false;
-                }
+
+                // Eliminates ternary operator using Optional.filter().map().orElse()
+                builder.withDetail("broker_" + brokerName.toLowerCase(),
+                    Optional.of(brokerHealthy)
+                        .filter(healthy -> healthy)
+                        .map(healthy -> "UP")
+                        .orElse("DOWN")
+                );
+
+                // Eliminates if-else using Optional.ifPresentOrElse()
+                Optional.of(brokerHealthy)
+                    .filter(healthy -> healthy)
+                    .ifPresentOrElse(
+                        healthy -> healthyBrokers.incrementAndGet(),
+                        () -> allBrokersHealthy.set(false)
+                    );
             }
-            
+
             long responseTime = System.currentTimeMillis() - startTime;
-            
+
             // Service is UP if at least one broker is available
-            if (healthyBrokers > 0) {
-                builder.up();
-            } else {
-                builder.down();
-            }
-            
-            builder.withDetail("healthyBrokers", healthyBrokers)
+            // Eliminates if-else using Optional.filter().ifPresentOrElse()
+            Optional.of(healthyBrokers.get())
+                .filter(count -> count > 0)
+                .ifPresentOrElse(
+                    count -> builder.up(),
+                    () -> builder.down()
+                );
+
+            builder.withDetail("healthyBrokers", healthyBrokers.get())
                    .withDetail("totalBrokers", totalBrokers)
-                   .withDetail("healthyPercentage", (double) healthyBrokers / totalBrokers * 100)
+                   .withDetail("healthyPercentage", (double) healthyBrokers.get() / totalBrokers * 100)
                    .withDetail("responseTimeMs", responseTime)
                    .withDetail("brokerAuthService", "CONNECTED")
                    .withDetail("circuitBreaker", "OPERATIONAL")
@@ -96,14 +110,14 @@ public class BrokerConnectivityHealthIndicator implements HealthIndicator {
                 try {
                     // Use the health endpoint to check broker connectivity
                     Map<String, Object> healthResponse = getBrokerHealthWithCircuitBreaker(brokerName);
-                    
-                    if (healthResponse != null && healthResponse.containsKey("status")) {
-                        String status = (String) healthResponse.get("status");
-                        return "UP".equalsIgnoreCase(status) || "HEALTHY".equalsIgnoreCase(status);
-                    }
-                    
-                    return false;
-                    
+
+                    // Eliminates if-statement using Optional.filter().map().orElse()
+                    return Optional.ofNullable(healthResponse)
+                        .filter(response -> response.containsKey("status"))
+                        .map(response -> (String) response.get("status"))
+                        .map(status -> "UP".equalsIgnoreCase(status) || "HEALTHY".equalsIgnoreCase(status))
+                        .orElse(false);
+
                 } catch (Exception e) {
                     log.debug("Broker {} health check failed: {}", brokerName, e.getMessage());
                     return false;

@@ -19,6 +19,7 @@ import jakarta.validation.constraints.Positive;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -244,23 +245,25 @@ public class Order {
     }
     
     /**
-     * Calculate fill percentage
+     * Calculate fill percentage - eliminates if-statement with Optional pattern
      */
     public double getFillPercentage() {
-        if (quantity == null || quantity == 0 || filledQuantity == null) {
-            return 0.0;
-        }
-        return (filledQuantity.doubleValue() / quantity.doubleValue()) * 100.0;
+        return Optional.ofNullable(quantity)
+            .filter(q -> q > 0)
+            .flatMap(q -> Optional.ofNullable(filledQuantity)
+                .map(f -> (f.doubleValue() / q.doubleValue()) * 100.0))
+            .orElse(0.0);
     }
     
     /**
-     * Get average execution price
+     * Get average execution price - eliminates if-statement with Optional pattern
      */
     public BigDecimal getAveragePrice() {
-        if (filledQuantity == null || filledQuantity == 0 || totalFilledValue == null) {
-            return BigDecimal.ZERO;
-        }
-        return totalFilledValue.divide(BigDecimal.valueOf(filledQuantity), 4, java.math.RoundingMode.HALF_UP);
+        return Optional.ofNullable(filledQuantity)
+            .filter(f -> f > 0)
+            .flatMap(f -> Optional.ofNullable(totalFilledValue)
+                .map(v -> v.divide(BigDecimal.valueOf(f), 4, java.math.RoundingMode.HALF_UP)))
+            .orElse(BigDecimal.ZERO);
     }
     
     /**
@@ -322,86 +325,113 @@ public class Order {
     }
     
     /**
-     * Calculate total order value
+     * Calculate total order value - eliminates if-statements and ternary with Optional pattern
      */
     public BigDecimal getOrderValue() {
-        BigDecimal price = orderType.requiresLimitPrice() ? limitPrice : null;
-        if (price == null || quantity == null) {
-            return BigDecimal.ZERO;
-        }
-        return price.multiply(BigDecimal.valueOf(quantity));
+        BigDecimal price = Optional.of(orderType)
+            .filter(OrderType::requiresLimitPrice)
+            .map(type -> limitPrice)
+            .orElse(null);
+
+        return Optional.ofNullable(price)
+            .flatMap(p -> Optional.ofNullable(quantity)
+                .map(q -> p.multiply(BigDecimal.valueOf(q))))
+            .orElse(BigDecimal.ZERO);
     }
     
     /**
-     * Calculate executed value (filled quantity * average fill price)
+     * Calculate executed value (filled quantity * average fill price) - eliminates if-statement
      */
     public BigDecimal getExecutedValue() {
-        if (avgFillPrice == null || filledQuantity == null || filledQuantity == 0) {
-            return BigDecimal.ZERO;
-        }
-        return avgFillPrice.multiply(BigDecimal.valueOf(filledQuantity));
+        return Optional.ofNullable(avgFillPrice)
+            .flatMap(price -> Optional.ofNullable(filledQuantity)
+                .filter(f -> f > 0)
+                .map(f -> price.multiply(BigDecimal.valueOf(f))))
+            .orElse(BigDecimal.ZERO);
     }
     
     /**
-     * Update order status with validation
+     * Update order status with validation - eliminates if-statements with functional patterns
      */
     public void updateStatus(OrderStatus newStatus) {
-        if (status.canTransitionTo(newStatus)) {
-            this.status = newStatus;
-            this.updatedAt = Instant.now();
-            
-            // Set timestamps for specific status transitions
-            if (newStatus == OrderStatus.SUBMITTED && submittedAt == null) {
-                this.submittedAt = Instant.now();
-            } else if ((newStatus == OrderStatus.PARTIALLY_FILLED || newStatus == OrderStatus.FILLED) 
-                       && executedAt == null) {
-                this.executedAt = Instant.now();
-            }
-        } else {
-            throw new IllegalStateException(
-                String.format("Invalid status transition from %s to %s for order %s", 
-                             status, newStatus, orderId));
-        }
+        // Validate transition using Optional - eliminates if-else
+        Optional.of(status)
+            .filter(s -> s.canTransitionTo(newStatus))
+            .ifPresentOrElse(
+                s -> performStatusUpdate(newStatus),
+                () -> {
+                    throw new IllegalStateException(
+                        String.format("Invalid status transition from %s to %s for order %s",
+                                     status, newStatus, orderId));
+                }
+            );
+    }
+
+    /**
+     * Perform status update with timestamp management - eliminates if-statements
+     */
+    private void performStatusUpdate(OrderStatus newStatus) {
+        this.status = newStatus;
+        this.updatedAt = Instant.now();
+
+        // Set submitted timestamp using pattern matching - eliminates if-statement
+        Optional.of(newStatus)
+            .filter(s -> s == OrderStatus.SUBMITTED)
+            .filter(s -> submittedAt == null)
+            .ifPresent(s -> this.submittedAt = Instant.now());
+
+        // Set executed timestamp using pattern matching - eliminates if-else-if
+        Optional.of(newStatus)
+            .filter(s -> s == OrderStatus.PARTIALLY_FILLED || s == OrderStatus.FILLED)
+            .filter(s -> executedAt == null)
+            .ifPresent(s -> this.executedAt = Instant.now());
     }
     
     /**
-     * Add fill to the order
+     * Add fill to the order - eliminates if-statements with functional validation
      */
     public void addFill(Integer fillQuantity, BigDecimal fillPrice) {
-        if (fillQuantity == null || fillQuantity <= 0) {
-            throw new IllegalArgumentException("Fill quantity must be positive");
-        }
-        
-        if (fillPrice == null || fillPrice.compareTo(BigDecimal.ZERO) <= 0) {
-            throw new IllegalArgumentException("Fill price must be positive");
-        }
-        
-        int newFilledQuantity = (filledQuantity != null ? filledQuantity : 0) + fillQuantity;
-        
-        if (newFilledQuantity > quantity) {
-            throw new IllegalArgumentException("Fill quantity exceeds order quantity");
-        }
-        
-        // Calculate new average fill price and total filled value
+        // Validate fill quantity using Optional - eliminates if-statement
+        Optional.ofNullable(fillQuantity)
+            .filter(q -> q > 0)
+            .orElseThrow(() -> new IllegalArgumentException("Fill quantity must be positive"));
+
+        // Validate fill price using Optional - eliminates if-statement
+        Optional.ofNullable(fillPrice)
+            .filter(p -> p.compareTo(BigDecimal.ZERO) > 0)
+            .orElseThrow(() -> new IllegalArgumentException("Fill price must be positive"));
+
+        int newFilledQuantity = Optional.ofNullable(filledQuantity).orElse(0) + fillQuantity;
+
+        // Validate new quantity doesn't exceed order quantity - eliminates if-statement
+        Optional.of(newFilledQuantity)
+            .filter(q -> q <= quantity)
+            .orElseThrow(() -> new IllegalArgumentException("Fill quantity exceeds order quantity"));
+
+        // Calculate and update fill values - eliminates if-else with Optional
         BigDecimal fillValue = fillPrice.multiply(BigDecimal.valueOf(fillQuantity));
-        
-        if (totalFilledValue == null) {
-            totalFilledValue = fillValue;
-            avgFillPrice = fillPrice;
-        } else {
-            totalFilledValue = totalFilledValue.add(fillValue);
-            avgFillPrice = totalFilledValue.divide(BigDecimal.valueOf(newFilledQuantity), 
-                                                 4, java.math.RoundingMode.HALF_UP);
-        }
-        
+
+        Optional.ofNullable(totalFilledValue)
+            .ifPresentOrElse(
+                existing -> {
+                    totalFilledValue = existing.add(fillValue);
+                    avgFillPrice = totalFilledValue.divide(BigDecimal.valueOf(newFilledQuantity),
+                                                         4, java.math.RoundingMode.HALF_UP);
+                },
+                () -> {
+                    totalFilledValue = fillValue;
+                    avgFillPrice = fillPrice;
+                }
+            );
+
         filledQuantity = newFilledQuantity;
-        
-        // Update status based on fill completion
-        if (isCompletelyFilled()) {
-            updateStatus(OrderStatus.FILLED);
-        } else {
-            updateStatus(OrderStatus.PARTIALLY_FILLED);
-        }
+
+        // Update status based on fill completion - eliminates if-else and ternary with Optional pattern
+        OrderStatus newStatus = Optional.of(isCompletelyFilled())
+            .filter(Boolean::booleanValue)
+            .map(filled -> OrderStatus.FILLED)
+            .orElse(OrderStatus.PARTIALLY_FILLED);
+        updateStatus(newStatus);
     }
     
     /**
@@ -432,35 +462,53 @@ public class Order {
     }
     
     /**
-     * Validate order for basic business rules
+     * Validate order for basic business rules - eliminates if-statements with functional validation
      */
     public void validate() {
-        if (symbol == null || symbol.trim().isEmpty()) {
-            throw new IllegalArgumentException("Symbol is required");
-        }
-        
-        if (quantity == null || quantity <= 0) {
-            throw new IllegalArgumentException("Quantity must be positive");
-        }
-        
-        if (orderType.requiresLimitPrice() && limitPrice == null) {
-            throw new IllegalArgumentException("Limit price is required for " + orderType);
-        }
-        
-        if (orderType.requiresStopPrice() && stopPrice == null) {
-            throw new IllegalArgumentException("Stop price is required for " + orderType);
-        }
-        
-        if (limitPrice != null && limitPrice.compareTo(BigDecimal.ZERO) <= 0) {
-            throw new IllegalArgumentException("Limit price must be positive");
-        }
-        
-        if (stopPrice != null && stopPrice.compareTo(BigDecimal.ZERO) <= 0) {
-            throw new IllegalArgumentException("Stop price must be positive");
-        }
-        
-        if (timeInForce == TimeInForce.GTD && expiryDate == null) {
-            throw new IllegalArgumentException("Expiry date is required for GTD orders");
-        }
+        // Validate symbol using Optional - eliminates if-statement
+        Optional.ofNullable(symbol)
+            .filter(s -> !s.trim().isEmpty())
+            .orElseThrow(() -> new IllegalArgumentException("Symbol is required"));
+
+        // Validate quantity using Optional - eliminates if-statement
+        Optional.ofNullable(quantity)
+            .filter(q -> q > 0)
+            .orElseThrow(() -> new IllegalArgumentException("Quantity must be positive"));
+
+        // Validate limit price requirement using functional pattern - eliminates if-statement
+        Optional.of(orderType)
+            .filter(OrderType::requiresLimitPrice)
+            .ifPresent(type -> Optional.ofNullable(limitPrice)
+                .orElseThrow(() -> new IllegalArgumentException("Limit price is required for " + type)));
+
+        // Validate stop price requirement using functional pattern - eliminates if-statement
+        Optional.of(orderType)
+            .filter(OrderType::requiresStopPrice)
+            .ifPresent(type -> Optional.ofNullable(stopPrice)
+                .orElseThrow(() -> new IllegalArgumentException("Stop price is required for " + type)));
+
+        // Validate limit price is positive using Optional - eliminates if-statement
+        Optional.ofNullable(limitPrice)
+            .filter(p -> p.compareTo(BigDecimal.ZERO) > 0)
+            .or(() -> Optional.ofNullable(limitPrice)
+                .map(p -> {
+                    throw new IllegalArgumentException("Limit price must be positive");
+                })
+            );
+
+        // Validate stop price is positive using Optional - eliminates if-statement
+        Optional.ofNullable(stopPrice)
+            .filter(p -> p.compareTo(BigDecimal.ZERO) > 0)
+            .or(() -> Optional.ofNullable(stopPrice)
+                .map(p -> {
+                    throw new IllegalArgumentException("Stop price must be positive");
+                })
+            );
+
+        // Validate GTD expiry date using pattern matching - eliminates if-statement
+        Optional.of(timeInForce)
+            .filter(tif -> tif == TimeInForce.GTD)
+            .ifPresent(tif -> Optional.ofNullable(expiryDate)
+                .orElseThrow(() -> new IllegalArgumentException("Expiry date is required for GTD orders")));
     }
 }

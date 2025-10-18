@@ -12,6 +12,7 @@ import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.Optional;
 
 /**
  * Order Fill Entity
@@ -102,18 +103,20 @@ public class OrderFill {
      * Calculate total fill value (quantity * price)
      */
     public BigDecimal getFillValue() {
-        if (fillQuantity == null || fillPrice == null) {
-            return BigDecimal.ZERO;
-        }
-        return fillPrice.multiply(new BigDecimal(fillQuantity));
+        // Eliminates if-statement using Optional.ofNullable().flatMap() chain
+        return Optional.ofNullable(fillQuantity)
+            .flatMap(qty -> Optional.ofNullable(fillPrice)
+                .map(price -> price.multiply(new BigDecimal(qty))))
+            .orElse(BigDecimal.ZERO);
     }
     
     /**
      * Calculate total charges (commission + taxes)
      */
     public BigDecimal getTotalCharges() {
-        BigDecimal comm = commission != null ? commission : BigDecimal.ZERO;
-        BigDecimal tax = taxes != null ? taxes : BigDecimal.ZERO;
+        // Eliminates ternary operators using Optional.ofNullable().orElse()
+        BigDecimal comm = Optional.ofNullable(commission).orElse(BigDecimal.ZERO);
+        BigDecimal tax = Optional.ofNullable(taxes).orElse(BigDecimal.ZERO);
         return comm.add(tax);
     }
     

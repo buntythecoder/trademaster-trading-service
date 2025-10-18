@@ -11,6 +11,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -66,34 +67,40 @@ public class DisasterRecoveryService {
     /**
      * Automated full system backup
      * Scheduled every 15 minutes to meet RPO of 1 minute with redundancy
+     * Eliminates if-statements with Optional pattern
      */
     @Scheduled(fixedRate = 900000) // 15 minutes
     public void performAutomatedBackup() {
-        CompletableFuture.supplyAsync(() -> {
-            if (!disasterRecoveryEnabled) {
-                return BackupResult.skipped("Disaster recovery disabled");
-            }
-            
-            try {
-                log.info("Starting automated backup procedure");
-                
-                BackupResult result = executeBackupProcedure();
-                
-                if (result.isSuccess()) {
-                    lastBackupTime.set(System.currentTimeMillis());
-                    log.info("Automated backup completed successfully - Location: {} Size: {} MB", 
-                        result.getBackupLocation(), result.getBackupSizeMB());
-                } else {
-                    log.error("Automated backup failed: {}", result.getErrorMessage());
-                }
-                
-                return result;
-                
-            } catch (Exception e) {
-                log.error("Critical error during automated backup", e);
-                return BackupResult.failed("Backup procedure failed: " + e.getMessage());
-            }
-        }).exceptionally(throwable -> {
+        CompletableFuture.supplyAsync(() ->
+            Optional.of(disasterRecoveryEnabled)
+                .filter(enabled -> enabled)
+                .map(enabled -> {
+                    try {
+                        log.info("Starting automated backup procedure");
+
+                        BackupResult result = executeBackupProcedure();
+
+                        // Eliminate if-else with Optional.ifPresentOrElse
+                        Optional.of(result)
+                            .filter(BackupResult::isSuccess)
+                            .ifPresentOrElse(
+                                r -> {
+                                    lastBackupTime.set(System.currentTimeMillis());
+                                    log.info("Automated backup completed successfully - Location: {} Size: {} MB",
+                                        r.getBackupLocation(), r.getBackupSizeMB());
+                                },
+                                () -> log.error("Automated backup failed: {}", result.getErrorMessage())
+                            );
+
+                        return result;
+
+                    } catch (Exception e) {
+                        log.error("Critical error during automated backup", e);
+                        return BackupResult.failed("Backup procedure failed: " + e.getMessage());
+                    }
+                })
+                .orElse(BackupResult.skipped("Disaster recovery disabled"))
+        ).exceptionally(throwable -> {
             log.error("Unexpected error in automated backup", throwable);
             return BackupResult.failed("Unexpected backup error: " + throwable.getMessage());
         });
@@ -133,19 +140,20 @@ public class DisasterRecoveryService {
     }
     
     /**
-     * Verify backup integrity with checksum validation
+     * Verify backup integrity with checksum validation - eliminates ternary with Optional
      */
     private Result<BackupResult, String> verifyBackupIntegrity(BackupResult backup) {
         try {
             // Perform integrity check
             Thread.sleep(500);
-            
+
             boolean isValid = backup.getBackupSizeMB() > 0;
-            
-            return isValid ? 
-                Result.success(backup) : 
-                Result.failure("Backup integrity verification failed");
-                
+
+            return Optional.of(isValid)
+                .filter(Boolean::booleanValue)
+                .map(valid -> Result.<BackupResult, String>success(backup))
+                .orElse(Result.<BackupResult, String>failure("Backup integrity verification failed"));
+
         } catch (Exception e) {
             return Result.failure("Integrity verification error: " + e.getMessage());
         }
@@ -189,34 +197,40 @@ public class DisasterRecoveryService {
     
     /**
      * Recovery testing automation - runs weekly
+     * Eliminates if-statements with Optional pattern
      */
     @Scheduled(cron = "0 0 2 * * SUN") // Sundays at 2 AM
     public void performRecoveryTest() {
-        CompletableFuture.supplyAsync(() -> {
-            if (!disasterRecoveryEnabled) {
-                return RecoveryTestResult.skipped("Disaster recovery disabled");
-            }
-            
-            try {
-                log.info("Starting automated recovery test");
-                
-                RecoveryTestResult result = executeRecoveryTest();
-                
-                if (result.isSuccess()) {
-                    lastRecoveryTestTime.set(System.currentTimeMillis());
-                    log.info("Recovery test completed successfully - RTO: {}ms, RPO: {}ms", 
-                        result.getRtoActual(), result.getRpoActual());
-                } else {
-                    log.error("Recovery test failed: {}", result.getErrorMessage());
-                }
-                
-                return result;
-                
-            } catch (Exception e) {
-                log.error("Critical error during recovery test", e);
-                return RecoveryTestResult.failed("Recovery test failed: " + e.getMessage());
-            }
-        }).exceptionally(throwable -> {
+        CompletableFuture.supplyAsync(() ->
+            Optional.of(disasterRecoveryEnabled)
+                .filter(enabled -> enabled)
+                .map(enabled -> {
+                    try {
+                        log.info("Starting automated recovery test");
+
+                        RecoveryTestResult result = executeRecoveryTest();
+
+                        // Eliminate if-else with Optional.ifPresentOrElse
+                        Optional.of(result)
+                            .filter(RecoveryTestResult::isSuccess)
+                            .ifPresentOrElse(
+                                r -> {
+                                    lastRecoveryTestTime.set(System.currentTimeMillis());
+                                    log.info("Recovery test completed successfully - RTO: {}ms, RPO: {}ms",
+                                        r.getRtoActual(), r.getRpoActual());
+                                },
+                                () -> log.error("Recovery test failed: {}", result.getErrorMessage())
+                            );
+
+                        return result;
+
+                    } catch (Exception e) {
+                        log.error("Critical error during recovery test", e);
+                        return RecoveryTestResult.failed("Recovery test failed: " + e.getMessage());
+                    }
+                })
+                .orElse(RecoveryTestResult.skipped("Disaster recovery disabled"))
+        ).exceptionally(throwable -> {
             log.error("Unexpected error in recovery test", throwable);
             return RecoveryTestResult.failed("Unexpected recovery test error: " + throwable.getMessage());
         });
@@ -234,18 +248,17 @@ public class DisasterRecoveryService {
     }
     
     /**
-     * Validate recovery preconditions
+     * Validate recovery preconditions - eliminates if-statement with Optional
      */
     private Result<RecoveryContext, String> validateRecoveryPreconditions() {
         try {
             boolean hasRecentBackup = (System.currentTimeMillis() - lastBackupTime.get()) < 3600000; // 1 hour
-            
-            if (!hasRecentBackup) {
-                return Result.failure("No recent backup available for recovery test");
-            }
-            
-            return Result.success(new RecoveryContext(System.currentTimeMillis()));
-            
+
+            return Optional.of(hasRecentBackup)
+                .filter(recent -> recent)
+                .map(recent -> Result.<RecoveryContext, String>success(new RecoveryContext(System.currentTimeMillis())))
+                .orElse(Result.<RecoveryContext, String>failure("No recent backup available for recovery test"));
+
         } catch (Exception e) {
             return Result.failure("Precondition validation failed: " + e.getMessage());
         }
@@ -268,49 +281,49 @@ public class DisasterRecoveryService {
     }
     
     /**
-     * Measure actual recovery time against RTO
+     * Measure actual recovery time against RTO - eliminates if-statement with Optional
      */
     private Result<RecoveryContext, String> measureRecoveryTime(RecoveryContext context) {
         try {
             // Simulate recovery process
             Thread.sleep(5000); // 5 seconds simulated recovery
-            
+
             context.recordRecoveryCompleted();
-            
+
             long actualRto = context.getActualRto();
             long targetRto = recoveryTimeObjective * 60 * 1000; // Convert minutes to ms
-            
-            if (actualRto > targetRto) {
-                log.warn("Recovery time {} ms exceeds target RTO {} ms", actualRto, targetRto);
-            }
-            
+
+            // Eliminate if-statement with Optional.filter().ifPresent()
+            Optional.of(actualRto)
+                .filter(rto -> rto > targetRto)
+                .ifPresent(rto -> log.warn("Recovery time {} ms exceeds target RTO {} ms", rto, targetRto));
+
             return Result.success(context);
-            
+
         } catch (Exception e) {
             return Result.failure("Recovery time measurement failed: " + e.getMessage());
         }
     }
     
     /**
-     * Validate recovery completeness
+     * Validate recovery completeness - eliminates if-statement with Optional
      */
     private Result<RecoveryTestResult, String> validateRecoveryCompleteness(RecoveryContext context) {
         try {
             // Simulate data integrity validation
             Thread.sleep(500);
-            
+
             boolean isComplete = context.getActualRto() > 0;
-            
-            if (!isComplete) {
-                return Result.failure("Recovery completeness validation failed");
-            }
-            
-            return Result.success(RecoveryTestResult.success(
-                context.getActualRto(),
-                recoveryPointObjective * 60 * 1000, // Convert minutes to ms
-                "All systems recovered successfully"
-            ));
-            
+
+            return Optional.of(isComplete)
+                .filter(complete -> complete)
+                .map(complete -> Result.<RecoveryTestResult, String>success(RecoveryTestResult.success(
+                    context.getActualRto(),
+                    recoveryPointObjective * 60 * 1000, // Convert minutes to ms
+                    "All systems recovered successfully"
+                )))
+                .orElse(Result.<RecoveryTestResult, String>failure("Recovery completeness validation failed"));
+
         } catch (Exception e) {
             return Result.failure("Recovery validation error: " + e.getMessage());
         }
@@ -442,7 +455,10 @@ public class DisasterRecoveryService {
         public long getSuccessCount() { return successCount.get(); }
         public long getAverageSize() {
             long count = successCount.get();
-            return count > 0 ? totalSize.get() / count : 0;
+            return Optional.of(count)
+                .filter(c -> c > 0)
+                .map(c -> totalSize.get() / c)
+                .orElse(0L);
         }
     }
     

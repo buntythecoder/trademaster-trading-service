@@ -11,6 +11,8 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.stream.Stream;
 
 /**
  * Portfolio Snapshot DTO
@@ -102,84 +104,88 @@ public class PortfolioSnapshot {
      */
     
     /**
-     * Calculate portfolio allocation percentage for a position
+     * Calculate portfolio allocation percentage for a position - eliminates if-statement with Optional
      */
     public BigDecimal getPositionWeight(Position position) {
-        if (totalValue == null || totalValue.compareTo(BigDecimal.ZERO) == 0 ||
-            position.getMarketValue() == null) {
-            return BigDecimal.ZERO;
-        }
-        return position.getMarketValue().divide(totalValue, 4, java.math.RoundingMode.HALF_UP)
-               .multiply(BigDecimal.valueOf(100));
+        return Optional.ofNullable(totalValue)
+            .filter(value -> value.compareTo(BigDecimal.ZERO) != 0)
+            .flatMap(value -> Optional.ofNullable(position.getMarketValue())
+                .map(marketValue -> marketValue.divide(value, 4, java.math.RoundingMode.HALF_UP)
+                    .multiply(BigDecimal.valueOf(100))))
+            .orElse(BigDecimal.ZERO);
     }
     
     /**
-     * Get cash allocation percentage
+     * Get cash allocation percentage - eliminates if-statement with Optional
      */
     public BigDecimal getCashAllocationPercent() {
-        if (totalValue == null || totalValue.compareTo(BigDecimal.ZERO) == 0 ||
-            cashBalance == null) {
-            return BigDecimal.ZERO;
-        }
-        return cashBalance.divide(totalValue, 4, java.math.RoundingMode.HALF_UP)
-               .multiply(BigDecimal.valueOf(100));
+        return Optional.ofNullable(totalValue)
+            .filter(value -> value.compareTo(BigDecimal.ZERO) != 0)
+            .flatMap(value -> Optional.ofNullable(cashBalance)
+                .map(cash -> cash.divide(value, 4, java.math.RoundingMode.HALF_UP)
+                    .multiply(BigDecimal.valueOf(100))))
+            .orElse(BigDecimal.ZERO);
     }
     
     /**
-     * Get invested allocation percentage
+     * Get invested allocation percentage - eliminates if-statement with Optional
      */
     public BigDecimal getInvestedAllocationPercent() {
-        if (totalValue == null || totalValue.compareTo(BigDecimal.ZERO) == 0 ||
-            investedValue == null) {
-            return BigDecimal.ZERO;
-        }
-        return investedValue.divide(totalValue, 4, java.math.RoundingMode.HALF_UP)
-               .multiply(BigDecimal.valueOf(100));
+        return Optional.ofNullable(totalValue)
+            .filter(value -> value.compareTo(BigDecimal.ZERO) != 0)
+            .flatMap(value -> Optional.ofNullable(investedValue)
+                .map(invested -> invested.divide(value, 4, java.math.RoundingMode.HALF_UP)
+                    .multiply(BigDecimal.valueOf(100))))
+            .orElse(BigDecimal.ZERO);
     }
     
     /**
-     * Get performance category based on returns
+     * Get performance category based on returns - eliminates if-else chain with Stream pattern
      */
     public String getPerformanceCategory() {
-        if (totalReturnPercent == null) {
-            return "UNKNOWN";
-        }
-        
-        BigDecimal returnPct = totalReturnPercent;
-        if (returnPct.compareTo(new BigDecimal("20")) > 0) {
-            return "EXCELLENT";
-        } else if (returnPct.compareTo(new BigDecimal("10")) > 0) {
-            return "GOOD";
-        } else if (returnPct.compareTo(new BigDecimal("0")) >= 0) {
-            return "POSITIVE";
-        } else if (returnPct.compareTo(new BigDecimal("-10")) > 0) {
-            return "NEGATIVE";
-        } else {
-            return "POOR";
-        }
+        return Optional.ofNullable(totalReturnPercent)
+            .map(returnPct -> {
+                record PerformanceThreshold(BigDecimal minReturn, String category) {}
+
+                return Stream.of(
+                    new PerformanceThreshold(new BigDecimal("20"), "EXCELLENT"),
+                    new PerformanceThreshold(new BigDecimal("10"), "GOOD"),
+                    new PerformanceThreshold(new BigDecimal("0"), "POSITIVE"),
+                    new PerformanceThreshold(new BigDecimal("-10"), "NEGATIVE")
+                )
+                .filter(threshold -> returnPct.compareTo(threshold.minReturn()) > 0)
+                .findFirst()
+                .map(PerformanceThreshold::category)
+                .orElse("POOR");
+            })
+            .orElse("UNKNOWN");
     }
     
     /**
-     * Get risk category based on risk metrics
+     * Get risk category based on risk metrics - eliminates if-else chain with Stream pattern
      */
     public String getRiskCategory() {
-        if (portfolioVaR == null || totalValue == null || totalValue.compareTo(BigDecimal.ZERO) == 0) {
-            return "UNKNOWN";
-        }
-        
-        // VaR as percentage of portfolio value
-        BigDecimal varPercent = portfolioVaR.divide(totalValue, 4, java.math.RoundingMode.HALF_UP)
-                                            .multiply(BigDecimal.valueOf(100));
-        
-        if (varPercent.compareTo(new BigDecimal("2")) <= 0) {
-            return "LOW";
-        } else if (varPercent.compareTo(new BigDecimal("5")) <= 0) {
-            return "MODERATE";
-        } else if (varPercent.compareTo(new BigDecimal("10")) <= 0) {
-            return "HIGH";
-        } else {
-            return "VERY_HIGH";
-        }
+        return Optional.ofNullable(totalValue)
+            .filter(value -> value.compareTo(BigDecimal.ZERO) != 0)
+            .flatMap(value -> Optional.ofNullable(portfolioVaR)
+                .map(var -> {
+                    // VaR as percentage of portfolio value
+                    BigDecimal varPercent = var.divide(value, 4, java.math.RoundingMode.HALF_UP)
+                        .multiply(BigDecimal.valueOf(100));
+
+                    record RiskThreshold(BigDecimal maxVarPercent, String category) {}
+
+                    return Stream.of(
+                        new RiskThreshold(new BigDecimal("2"), "LOW"),
+                        new RiskThreshold(new BigDecimal("5"), "MODERATE"),
+                        new RiskThreshold(new BigDecimal("10"), "HIGH")
+                    )
+                    .filter(threshold -> varPercent.compareTo(threshold.maxVarPercent()) <= 0)
+                    .findFirst()
+                    .map(RiskThreshold::category)
+                    .orElse("VERY_HIGH");
+                }))
+            .orElse("UNKNOWN");
     }
     
     /**
@@ -191,18 +197,18 @@ public class PortfolioSnapshot {
     }
     
     /**
-     * Get portfolio summary statistics
+     * Get portfolio summary statistics - eliminates ternary operators with Optional
      */
     public Map<String, Object> getSummaryStats() {
         Map<String, Object> stats = new java.util.HashMap<>();
-        stats.put("totalValue", totalValue != null ? totalValue : BigDecimal.ZERO);
-        stats.put("totalPnL", totalPnL != null ? totalPnL : BigDecimal.ZERO);
-        stats.put("dayChange", dayChange != null ? dayChange : BigDecimal.ZERO);
-        stats.put("dayChangePercent", dayChangePercent != null ? dayChangePercent : BigDecimal.ZERO);
-        stats.put("totalPositions", totalPositions != null ? totalPositions : 0);
+        stats.put("totalValue", Optional.ofNullable(totalValue).orElse(BigDecimal.ZERO));
+        stats.put("totalPnL", Optional.ofNullable(totalPnL).orElse(BigDecimal.ZERO));
+        stats.put("dayChange", Optional.ofNullable(dayChange).orElse(BigDecimal.ZERO));
+        stats.put("dayChangePercent", Optional.ofNullable(dayChangePercent).orElse(BigDecimal.ZERO));
+        stats.put("totalPositions", Optional.ofNullable(totalPositions).orElse(0));
         stats.put("performanceCategory", getPerformanceCategory());
         stats.put("riskCategory", getRiskCategory());
-        stats.put("healthScore", healthScore != null ? healthScore : BigDecimal.ZERO);
+        stats.put("healthScore", Optional.ofNullable(healthScore).orElse(BigDecimal.ZERO));
         stats.put("needsRebalancing", needsRebalancing());
         return java.util.Collections.unmodifiableMap(stats);
     }

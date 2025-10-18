@@ -9,6 +9,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Order Validation Result
@@ -248,32 +249,48 @@ public class OrderValidationResult {
                detailedMessages.stream().anyMatch(m -> "WARNING".equals(m.getSeverity()));
     }
     
+    /**
+     * Get error messages - uses Optional to eliminate ternary operator
+     */
     public List<ValidationMessage> getErrors() {
-        return detailedMessages != null ? 
-               detailedMessages.stream()
-                   .filter(m -> "ERROR".equals(m.getSeverity()))
-                   .toList() : List.of();
+        return Optional.ofNullable(detailedMessages)
+            .map(messages -> messages.stream()
+                .filter(m -> "ERROR".equals(m.getSeverity()))
+                .toList())
+            .orElse(List.of());
     }
-    
+
+    /**
+     * Get warning messages - uses Optional to eliminate ternary operator
+     */
     public List<ValidationMessage> getWarnings() {
-        return detailedMessages != null ? 
-               detailedMessages.stream()
-                   .filter(m -> "WARNING".equals(m.getSeverity()))
-                   .toList() : List.of();
+        return Optional.ofNullable(detailedMessages)
+            .map(messages -> messages.stream()
+                .filter(m -> "WARNING".equals(m.getSeverity()))
+                .toList())
+            .orElse(List.of());
     }
-    
+
+    /**
+     * Get required actions - uses Optional to eliminate ternary operator
+     */
     public List<CorrectiveAction> getRequiredActions() {
-        return correctiveActions != null ? 
-               correctiveActions.stream()
-                   .filter(CorrectiveAction::isRequired)
-                   .toList() : List.of();
+        return Optional.ofNullable(correctiveActions)
+            .map(actions -> actions.stream()
+                .filter(CorrectiveAction::isRequired)
+                .toList())
+            .orElse(List.of());
     }
-    
+
+    /**
+     * Get optional actions - uses Optional to eliminate ternary operator
+     */
     public List<CorrectiveAction> getOptionalActions() {
-        return correctiveActions != null ? 
-               correctiveActions.stream()
-                   .filter(action -> !action.isRequired())
-                   .toList() : List.of();
+        return Optional.ofNullable(correctiveActions)
+            .map(actions -> actions.stream()
+                .filter(action -> !action.isRequired())
+                .toList())
+            .orElse(List.of());
     }
     
     public boolean requiresManualApproval() {
@@ -291,27 +308,33 @@ public class OrderValidationResult {
                performanceImpact.getEstimatedMarketImpact().compareTo(new BigDecimal("50")) > 0; // 50 bps
     }
     
+    /**
+     * Get validation summary - uses Optional to eliminate if-statements and ternary operator
+     */
     public String getValidationSummary() {
         StringBuilder summary = new StringBuilder();
-        
-        summary.append("Validation Status: ").append(isValid ? "PASSED" : "FAILED").append("\n");
-        
-        if (overallRiskScore != null) {
-            summary.append("Risk Score: ").append(overallRiskScore).append("\n");
-        }
-        
-        if (complianceRating != null) {
-            summary.append("Compliance Rating: ").append(complianceRating).append("\n");
-        }
-        
-        if (hasErrors()) {
-            summary.append("Errors: ").append(getErrors().size()).append("\n");
-        }
-        
-        if (hasWarnings()) {
-            summary.append("Warnings: ").append(getWarnings().size()).append("\n");
-        }
-        
+
+        summary.append("Validation Status: ").append(
+            Optional.of(isValid)
+                .filter(valid -> valid)
+                .map(valid -> "PASSED")
+                .orElse("FAILED")
+        ).append("\n");
+
+        Optional.ofNullable(overallRiskScore)
+            .ifPresent(score -> summary.append("Risk Score: ").append(score).append("\n"));
+
+        Optional.ofNullable(complianceRating)
+            .ifPresent(rating -> summary.append("Compliance Rating: ").append(rating).append("\n"));
+
+        Optional.of(hasErrors())
+            .filter(hasErr -> hasErr)
+            .ifPresent(hasErr -> summary.append("Errors: ").append(getErrors().size()).append("\n"));
+
+        Optional.of(hasWarnings())
+            .filter(hasWarn -> hasWarn)
+            .ifPresent(hasWarn -> summary.append("Warnings: ").append(getWarnings().size()).append("\n"));
+
         return summary.toString();
     }
     

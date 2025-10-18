@@ -57,19 +57,21 @@ public class TradingLogger {
     
     /**
      * Set trading context for all subsequent logs
+     * Uses Optional patterns to eliminate if-statements
      */
     public void setTradingContext(String orderId, String symbol, String strategy, String accountId) {
-        if (orderId != null) MDC.put(ORDER_ID, orderId);
-        if (symbol != null) MDC.put(SYMBOL, symbol);
-        if (strategy != null) MDC.put(STRATEGY, strategy);
-        if (accountId != null) MDC.put(ACCOUNT_ID, accountId);
+        Optional.ofNullable(orderId).ifPresent(id -> MDC.put(ORDER_ID, id));
+        Optional.ofNullable(symbol).ifPresent(sym -> MDC.put(SYMBOL, sym));
+        Optional.ofNullable(strategy).ifPresent(strat -> MDC.put(STRATEGY, strat));
+        Optional.ofNullable(accountId).ifPresent(acc -> MDC.put(ACCOUNT_ID, acc));
     }
     
     /**
      * Set broker context for external integrations
+     * Uses Optional patterns to eliminate if-statements
      */
     public void setBrokerContext(String broker) {
-        if (broker != null) MDC.put(BROKER, broker);
+        Optional.ofNullable(broker).ifPresent(b -> MDC.put(BROKER, b));
     }
     
     /**
@@ -236,9 +238,15 @@ public class TradingLogger {
     
     /**
      * Log strategy execution
+     * Uses Optional patterns to eliminate ternary operators
      */
     public void logStrategyExecution(String strategyName, String symbol, String action,
                                    boolean success, double pnl, long executionTimeMs) {
+        String status = Optional.of(success)
+            .filter(s -> s)
+            .map(s -> "success")
+            .orElse("failure");
+
         log.info("Strategy executed",
             StructuredArguments.kv(STRATEGY, strategyName),
             StructuredArguments.kv(SYMBOL, symbol),
@@ -246,16 +254,22 @@ public class TradingLogger {
             StructuredArguments.kv("pnl", pnl),
             StructuredArguments.kv("executionTime", executionTimeMs),
             StructuredArguments.kv(OPERATION, "strategy_execution"),
-            StructuredArguments.kv(STATUS, success ? "success" : "failure"),
+            StructuredArguments.kv(STATUS, status),
             StructuredArguments.kv("timestamp", Instant.now())
         );
     }
     
     /**
      * Log broker request
+     * Uses Optional patterns to eliminate ternary operators
      */
     public void logBrokerRequest(String broker, String operation, String endpoint,
                                 int statusCode, long responseTimeMs, boolean success) {
+        String status = Optional.of(success)
+            .filter(s -> s)
+            .map(s -> "success")
+            .orElse("failure");
+
         log.info("Broker request completed",
             StructuredArguments.kv(BROKER, broker),
             StructuredArguments.kv("brokerOperation", operation),
@@ -263,7 +277,7 @@ public class TradingLogger {
             StructuredArguments.kv("statusCode", statusCode),
             StructuredArguments.kv("responseTime", responseTimeMs),
             StructuredArguments.kv(OPERATION, "broker_request"),
-            StructuredArguments.kv(STATUS, success ? "success" : "failure"),
+            StructuredArguments.kv(STATUS, status),
             StructuredArguments.kv("timestamp", Instant.now())
         );
     }
@@ -353,9 +367,15 @@ public class TradingLogger {
     
     /**
      * Log API request
+     * Uses Optional patterns to eliminate ternary operators
      */
     public void logApiRequest(String endpoint, String method, String accountId, int statusCode,
                              long durationMs, String userAgent) {
+        String status = Optional.of(statusCode)
+            .filter(code -> code < 400)
+            .map(code -> "success")
+            .orElse("error");
+
         log.info("API request processed",
             StructuredArguments.kv("endpoint", endpoint),
             StructuredArguments.kv("method", method),
@@ -364,23 +384,29 @@ public class TradingLogger {
             StructuredArguments.kv(DURATION_MS, durationMs),
             StructuredArguments.kv("userAgent", sanitizeUserAgent(userAgent)),
             StructuredArguments.kv(OPERATION, "api_request"),
-            StructuredArguments.kv(STATUS, statusCode < 400 ? "success" : "error"),
+            StructuredArguments.kv(STATUS, status),
             StructuredArguments.kv("timestamp", Instant.now())
         );
     }
     
     /**
      * Log database operation
+     * Uses Optional patterns to eliminate ternary operators
      */
     public void logDatabaseOperation(String operation, String table, int recordsAffected,
                                    long durationMs, boolean success) {
+        String status = Optional.of(success)
+            .filter(s -> s)
+            .map(s -> "success")
+            .orElse("failure");
+
         log.debug("Database operation completed",
             StructuredArguments.kv("dbOperation", operation),
             StructuredArguments.kv("table", table),
             StructuredArguments.kv("recordsAffected", recordsAffected),
             StructuredArguments.kv(DURATION_MS, durationMs),
             StructuredArguments.kv(OPERATION, "database_operation"),
-            StructuredArguments.kv(STATUS, success ? "success" : "failure"),
+            StructuredArguments.kv(STATUS, status),
             StructuredArguments.kv("timestamp", Instant.now())
         );
     }
@@ -428,16 +454,21 @@ public class TradingLogger {
     
     /**
      * Log error with context
+     * Uses Optional patterns to eliminate ternary operators
      */
     public void logError(String operation, String errorType, String errorMessage,
                         String symbol, String orderId, Exception exception) {
+        String exceptionClass = Optional.ofNullable(exception)
+            .map(ex -> ex.getClass().getSimpleName())
+            .orElse(null);
+
         log.error("Operation failed",
             StructuredArguments.kv(OPERATION, operation),
             StructuredArguments.kv("errorType", errorType),
             StructuredArguments.kv("errorMessage", errorMessage),
             StructuredArguments.kv(SYMBOL, symbol),
             StructuredArguments.kv(ORDER_ID, orderId),
-            StructuredArguments.kv("exceptionClass", exception != null ? exception.getClass().getSimpleName() : null),
+            StructuredArguments.kv("exceptionClass", exceptionClass),
             StructuredArguments.kv(STATUS, "error"),
             StructuredArguments.kv("timestamp", Instant.now()),
             exception
@@ -446,17 +477,23 @@ public class TradingLogger {
     
     /**
      * Log performance metrics
+     * Uses Optional patterns to eliminate ternary operators
      */
     public void logPerformanceMetrics(String operation, long durationMs, boolean success,
                                      Map<String, Object> additionalMetrics) {
         var logBuilder = log.atInfo();
-        
+
+        String status = Optional.of(success)
+            .filter(s -> s)
+            .map(s -> "success")
+            .orElse("failure");
+
         logBuilder = logBuilder.addKeyValue(OPERATION, operation)
             .addKeyValue(DURATION_MS, durationMs)
-            .addKeyValue(STATUS, success ? "success" : "failure")
+            .addKeyValue(STATUS, status)
             .addKeyValue("timestamp", Instant.now())
             .addKeyValue("category", "performance");
-        
+
         var finalMetricsLogBuilder = Optional.ofNullable(additionalMetrics)
             .map(Map::entrySet)
             .orElse(Set.of())
@@ -464,7 +501,7 @@ public class TradingLogger {
             .reduce(logBuilder,
                 (builder, entry) -> builder.addKeyValue("metric_" + entry.getKey(), entry.getValue()),
                 (b1, b2) -> b1);
-        
+
         finalMetricsLogBuilder.log("Performance metrics recorded");
     }
     
@@ -493,12 +530,17 @@ public class TradingLogger {
         finalStructuredLogBuilder.log(message);
     }
     
-    // Utility Methods
+    /**
+     * Utility Methods
+     * Uses Optional patterns to eliminate if-statements and ternary operators
+     */
     private String sanitizeUserAgent(String userAgent) {
-        if (userAgent == null || userAgent.trim().isEmpty()) {
-            return "unknown";
-        }
-        // Remove sensitive information and limit length
-        return userAgent.length() > 200 ? userAgent.substring(0, 200) : userAgent;
+        return Optional.ofNullable(userAgent)
+            .filter(ua -> !ua.trim().isEmpty())
+            .map(ua -> Optional.of(ua)
+                .filter(agent -> agent.length() > 200)
+                .map(agent -> agent.substring(0, 200))
+                .orElse(ua))
+            .orElse("unknown");
     }
 }

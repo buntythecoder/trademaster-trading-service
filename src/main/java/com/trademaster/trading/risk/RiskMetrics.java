@@ -5,6 +5,7 @@ import lombok.Data;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.Optional;
 
 /**
  * Risk Metrics
@@ -118,13 +119,12 @@ public class RiskMetrics {
      * Calculate position concentration risk
      */
     public double getConcentrationRisk() {
-        if (portfolioValue == null || portfolioValue.compareTo(BigDecimal.ZERO) <= 0 ||
-            largestPositionValue == null) {
-            return 0.0;
-        }
-        
-        return largestPositionValue.divide(portfolioValue, 4, BigDecimal.ROUND_HALF_UP)
-                                 .doubleValue();
+        // Eliminates if-statement using Optional.ofNullable().flatMap().filter() chain
+        return Optional.ofNullable(portfolioValue)
+            .filter(pv -> pv.compareTo(BigDecimal.ZERO) > 0)
+            .flatMap(pv -> Optional.ofNullable(largestPositionValue)
+                .map(lpv -> lpv.divide(pv, 4, BigDecimal.ROUND_HALF_UP).doubleValue()))
+            .orElse(0.0);
     }
     
     /**
@@ -145,10 +145,10 @@ public class RiskMetrics {
      * Get available order capacity
      */
     public BigDecimal getAvailableOrderCapacity() {
-        if (maxOrderValue == null || dailyVolume == null) {
-            return BigDecimal.ZERO;
-        }
-        
-        return maxOrderValue.subtract(dailyVolume).max(BigDecimal.ZERO);
+        // Eliminates if-statement using Optional.ofNullable().flatMap() chain
+        return Optional.ofNullable(maxOrderValue)
+            .flatMap(maxOrder -> Optional.ofNullable(dailyVolume)
+                .map(volume -> maxOrder.subtract(volume).max(BigDecimal.ZERO)))
+            .orElse(BigDecimal.ZERO);
     }
 }

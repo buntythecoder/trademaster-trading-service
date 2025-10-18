@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.*;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
 /**
@@ -71,7 +72,15 @@ public class TradingMCPController {
                 TimeInForce.valueOf(request.getTimeInForce()),
                 null, // expiry date
                 null, // broker name
-                request.getRequestId() != null ? request.getRequestId().toString() : null
+                Optional.ofNullable(request.getRequestId()).map(Object::toString).orElse(null),
+                null, // trailAmount
+                null, // trailPercent
+                null, // entryPrice
+                null, // profitTarget
+                null, // displayQuantity
+                null, // timeWindowMinutes
+                null, // sliceIntervalSeconds
+                null  // participationRate
             );
                 
             CompletableFuture<String> result = tradingAgent.executeOrder(orderRequest);
@@ -122,7 +131,15 @@ public class TradingMCPController {
                 TimeInForce.DAY,
                 null, // expiry date
                 null, // broker name
-                null // client order ref
+                null, // client order ref
+                null, // trailAmount
+                null, // trailPercent
+                null, // entryPrice
+                null, // profitTarget
+                null, // displayQuantity
+                null, // timeWindowMinutes
+                null, // sliceIntervalSeconds
+                null  // participationRate
             );
                 
             CompletableFuture<String> result = tradingAgent.performRiskAssessment(orderRequest);
@@ -175,9 +192,17 @@ public class TradingMCPController {
                 TimeInForce.DAY,
                 null, // expiry date
                 null, // broker name
-                null // client order ref
+                null, // client order ref
+                null, // trailAmount
+                null, // trailPercent
+                null, // entryPrice
+                null, // profitTarget
+                null, // displayQuantity
+                null, // timeWindowMinutes
+                null, // sliceIntervalSeconds
+                null  // participationRate
             );
-                
+
             CompletableFuture<String> result = tradingAgent.routeToOptimalBroker(orderRequest, availableBrokers);
             String routingResult = result.join();
             
@@ -267,9 +292,17 @@ public class TradingMCPController {
                 TimeInForce.DAY,
                 null, // expiry date
                 null, // broker name
-                null // client order ref
+                null, // client order ref
+                null, // trailAmount
+                null, // trailPercent
+                null, // entryPrice
+                null, // profitTarget
+                null, // displayQuantity
+                null, // timeWindowMinutes
+                null, // sliceIntervalSeconds
+                null  // participationRate
             );
-                
+
             CompletableFuture<String> result = tradingAgent.performComplianceCheck(orderRequest, request.getUserId());
             String complianceResult = result.join();
             
@@ -348,7 +381,10 @@ public class TradingMCPController {
             AgentHealthResponse health = AgentHealthResponse.builder()
                 .agentId(tradingAgent.getAgentId())
                 .healthScore(tradingAgent.getHealthScore())
-                .status(tradingAgent.getHealthScore() > 0.8 ? "HEALTHY" : "DEGRADED")
+                .status(Optional.of(tradingAgent.getHealthScore())
+                    .filter(score -> score > 0.8)
+                    .map(score -> "HEALTHY")
+                    .orElse("DEGRADED"))
                 .capabilities(tradingAgent.getCapabilities())
                 .lastUpdate(System.currentTimeMillis())
                 .build();

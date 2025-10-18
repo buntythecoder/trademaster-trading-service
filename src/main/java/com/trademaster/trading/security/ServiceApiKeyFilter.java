@@ -17,6 +17,7 @@ import org.springframework.util.StringUtils;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Service API Key Authentication Filter - Kong Dynamic Integration
@@ -54,67 +55,199 @@ public class ServiceApiKeyFilter implements Filter {
     @Value("${trademaster.security.service.enabled:true}")
     private boolean serviceAuthEnabled;
     
+    /**
+     * Main filter method - functional validation chain using Optional patterns
+     * Eliminates all if-statements with functional composition
+     */
     @Override
-    public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain) 
+    public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain)
             throws IOException, ServletException {
-        
+
         HttpServletRequest httpRequest = (HttpServletRequest) request;
         HttpServletResponse httpResponse = (HttpServletResponse) response;
-        
         String requestPath = httpRequest.getRequestURI();
-        
-        // Only process internal API requests
-        if (!requestPath.startsWith(INTERNAL_API_PATH)) {
-            chain.doFilter(request, response);
-            return;
-        }
-        
-        // Skip authentication if disabled (for local development)
-        if (!serviceAuthEnabled) {
-            log.warn("ServiceApiKeyFilter: Service authentication is DISABLED - allowing internal API access");
-            setServiceAuthentication("development-service");
-            chain.doFilter(request, response);
-            return;
-        }
-        
-        // Check for Kong consumer headers first (Kong has already validated the API key)
-        String kongConsumerId = httpRequest.getHeader(KONG_CONSUMER_ID_HEADER);
-        String kongConsumerUsername = httpRequest.getHeader(KONG_CONSUMER_USERNAME_HEADER);
-        
-        // If Kong consumer headers are present, Kong has already validated the API key
-        if (StringUtils.hasText(kongConsumerId) && StringUtils.hasText(kongConsumerUsername)) {
-            log.info("ServiceApiKeyFilter: Kong validated consumer '{}' (ID: {}), granting SERVICE access", 
-                     kongConsumerUsername, kongConsumerId);
-            setServiceAuthentication(kongConsumerUsername);
-            chain.doFilter(request, response);
-            return;
-        }
-        
-        // Fall back to direct API key validation (for direct service calls not through Kong)
-        String apiKey = httpRequest.getHeader(API_KEY_HEADER);
-        
-        if (!StringUtils.hasText(apiKey)) {
-            log.error("ServiceApiKeyFilter: No Kong consumer headers and missing X-API-Key header for request: {} from {}", 
-                     requestPath, httpRequest.getRemoteAddr());
-            sendUnauthorizedResponse(httpResponse, "Missing service API key or Kong consumer headers");
-            return;
-        }
-        
-        // For fallback validation, we can use a simple check or integrate with your existing validation logic
-        if (StringUtils.hasText(fallbackServiceApiKey) && !fallbackServiceApiKey.equals(apiKey)) {
-            log.error("ServiceApiKeyFilter: Invalid API key for direct service request: {} from {}", 
-                     requestPath, httpRequest.getRemoteAddr());
-            sendUnauthorizedResponse(httpResponse, "Invalid service API key");
-            return;
-        }
-        
-        // Set service authentication for fallback case
-        setServiceAuthentication("direct-service-call");
-        
-        log.info("ServiceApiKeyFilter: Direct API key authentication successful for request: {}", requestPath);
-        
-        chain.doFilter(request, response);
+
+        // Functional validation chain - eliminates if-statements with Optional
+        processInternalApiFilter(httpRequest, httpResponse, chain, requestPath);
     }
+
+    /**
+     * Step 1: Check if request is for internal API
+     * Uses Optional to eliminate if-statement
+     */
+    private void processInternalApiFilter(HttpServletRequest request, HttpServletResponse response,
+                                         FilterChain chain, String requestPath)
+            throws IOException, ServletException {
+
+        Optional.of(requestPath)
+            .filter(path -> !path.startsWith(INTERNAL_API_PATH))
+            .ifPresentOrElse(
+                path -> {
+                    // Not internal API - pass through filter chain
+                    try {
+                        chain.doFilter(request, response);
+                    } catch (IOException | ServletException e) {
+                        throw new RuntimeException(e);
+                    }
+                },
+                () -> {
+                    // Internal API - continue to next validation
+                    try {
+                        processServiceAuthCheck(request, response, chain, requestPath);
+                    } catch (IOException | ServletException e) {
+                        throw new RuntimeException(e);
+                    }
+                }
+            );
+    }
+
+    /**
+     * Step 2: Check if service authentication is enabled
+     * Uses Optional to eliminate if-statement
+     */
+    private void processServiceAuthCheck(HttpServletRequest request, HttpServletResponse response,
+                                        FilterChain chain, String requestPath)
+            throws IOException, ServletException {
+
+        Optional.of(serviceAuthEnabled)
+            .filter(enabled -> !enabled)
+            .ifPresentOrElse(
+                enabled -> {
+                    // Service auth disabled - allow with warning
+                    log.warn("ServiceApiKeyFilter: Service authentication is DISABLED - allowing internal API access");
+                    setServiceAuthentication("development-service");
+                    try {
+                        chain.doFilter(request, response);
+                    } catch (IOException | ServletException e) {
+                        throw new RuntimeException(e);
+                    }
+                },
+                () -> {
+                    // Service auth enabled - continue to Kong header check
+                    try {
+                        processKongHeaders(request, response, chain, requestPath);
+                    } catch (IOException | ServletException e) {
+                        throw new RuntimeException(e);
+                    }
+                }
+            );
+    }
+
+    /**
+     * Step 3: Check for Kong consumer headers
+     * Uses Optional to eliminate if-statement
+     */
+    private void processKongHeaders(HttpServletRequest request, HttpServletResponse response,
+                                   FilterChain chain, String requestPath)
+            throws IOException, ServletException {
+
+        String kongConsumerId = request.getHeader(KONG_CONSUMER_ID_HEADER);
+        String kongConsumerUsername = request.getHeader(KONG_CONSUMER_USERNAME_HEADER);
+
+        // Check if both Kong headers are present - eliminates if-statement with Optional
+        Optional.of(kongConsumerId)
+            .filter(StringUtils::hasText)
+            .flatMap(id -> Optional.ofNullable(kongConsumerUsername)
+                .filter(StringUtils::hasText)
+                .map(username -> new KongConsumer(id, username)))
+            .ifPresentOrElse(
+                consumer -> {
+                    // Kong validated - grant access
+                    log.info("ServiceApiKeyFilter: Kong validated consumer '{}' (ID: {}), granting SERVICE access",
+                             consumer.username(), consumer.id());
+                    setServiceAuthentication(consumer.username());
+                    try {
+                        chain.doFilter(request, response);
+                    } catch (IOException | ServletException e) {
+                        throw new RuntimeException(e);
+                    }
+                },
+                () -> {
+                    // No Kong headers - fallback to direct API key validation
+                    try {
+                        processFallbackApiKey(request, response, chain, requestPath);
+                    } catch (IOException | ServletException e) {
+                        throw new RuntimeException(e);
+                    }
+                }
+            );
+    }
+
+    /**
+     * Step 4: Process fallback direct API key validation
+     * Uses Optional to eliminate if-statements
+     */
+    private void processFallbackApiKey(HttpServletRequest request, HttpServletResponse response,
+                                      FilterChain chain, String requestPath)
+            throws IOException, ServletException {
+
+        String apiKey = request.getHeader(API_KEY_HEADER);
+
+        // Check if API key is present - eliminates if-statement with Optional
+        Optional.ofNullable(apiKey)
+            .filter(StringUtils::hasText)
+            .ifPresentOrElse(
+                key -> {
+                    // API key present - validate it
+                    try {
+                        validateFallbackApiKey(request, response, chain, requestPath, key);
+                    } catch (IOException | ServletException e) {
+                        throw new RuntimeException(e);
+                    }
+                },
+                () -> {
+                    // API key missing - send unauthorized
+                    log.error("ServiceApiKeyFilter: No Kong consumer headers and missing X-API-Key header for request: {} from {}",
+                             requestPath, request.getRemoteAddr());
+                    try {
+                        sendUnauthorizedResponse(response, "Missing service API key or Kong consumer headers");
+                    } catch (IOException e) {
+                        throw new RuntimeException(e);
+                    }
+                }
+            );
+    }
+
+    /**
+     * Step 5: Validate fallback API key
+     * Uses Optional to eliminate if-statement
+     */
+    private void validateFallbackApiKey(HttpServletRequest request, HttpServletResponse response,
+                                       FilterChain chain, String requestPath, String apiKey)
+            throws IOException, ServletException {
+
+        // Validate API key matches fallback key - eliminates if-statement with Optional
+        Optional.ofNullable(fallbackServiceApiKey)
+            .filter(StringUtils::hasText)
+            .filter(fallbackKey -> !fallbackKey.equals(apiKey))
+            .ifPresentOrElse(
+                fallbackKey -> {
+                    // Invalid API key - send unauthorized
+                    log.error("ServiceApiKeyFilter: Invalid API key for direct service request: {} from {}",
+                             requestPath, request.getRemoteAddr());
+                    try {
+                        sendUnauthorizedResponse(response, "Invalid service API key");
+                    } catch (IOException e) {
+                        throw new RuntimeException(e);
+                    }
+                },
+                () -> {
+                    // Valid API key - grant access
+                    setServiceAuthentication("direct-service-call");
+                    log.info("ServiceApiKeyFilter: Direct API key authentication successful for request: {}", requestPath);
+                    try {
+                        chain.doFilter(request, response);
+                    } catch (IOException | ServletException e) {
+                        throw new RuntimeException(e);
+                    }
+                }
+            );
+    }
+
+    /**
+     * Helper record for Kong consumer data
+     */
+    private record KongConsumer(String id, String username) {}
     
     
     /**

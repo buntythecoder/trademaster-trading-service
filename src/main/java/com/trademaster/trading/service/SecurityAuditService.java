@@ -9,6 +9,7 @@ import org.springframework.beans.factory.annotation.Value;
 
 import java.time.Instant;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
@@ -49,191 +50,205 @@ public class SecurityAuditService {
     private final Map<String, AtomicLong> userFailureAttempts = new ConcurrentHashMap<>();
     
     /**
-     * Log authentication success event
+     * Log authentication success event - eliminates if-statement with Optional
      */
     public CompletableFuture<Void> logAuthenticationSuccess(String username, String clientIP, String userAgent) {
-        return CompletableFuture.runAsync(() -> {
-            if (!auditEnabled) return;
-            
-            Map<String, Object> data = Map.of(
-                "username", username,
-                "clientIP", clientIP,
-                "userAgent", userAgent,
-                "timestamp", Instant.now(),
-                "success", true,
-                "sessionId", generateSessionId()
-            );
-            
-            AuditEvent event = new AuditEvent(username, "AUTHENTICATION_SUCCESS", data);
-            auditEventRepository.add(event);
-            
-            // Reset failure counter for user
-            userFailureAttempts.put(username, new AtomicLong(0));
-            
-            log.info("Authentication successful - User: {} IP: {}", username, clientIP);
-            totalSecurityEvents.incrementAndGet();
-        });
+        return CompletableFuture.runAsync(() ->
+            // Eliminates if-statement with Optional.filter()
+            Optional.of(auditEnabled)
+                .filter(Boolean::booleanValue)
+                .ifPresent(enabled -> {
+                    Map<String, Object> data = Map.of(
+                        "username", username,
+                        "clientIP", clientIP,
+                        "userAgent", userAgent,
+                        "timestamp", Instant.now(),
+                        "success", true,
+                        "sessionId", generateSessionId()
+                    );
+
+                    AuditEvent event = new AuditEvent(username, "AUTHENTICATION_SUCCESS", data);
+                    auditEventRepository.add(event);
+
+                    // Reset failure counter for user
+                    userFailureAttempts.put(username, new AtomicLong(0));
+
+                    log.info("Authentication successful - User: {} IP: {}", username, clientIP);
+                    totalSecurityEvents.incrementAndGet();
+                })
+        );
     }
     
     /**
-     * Log authentication failure with threat detection
+     * Log authentication failure with threat detection - eliminates all if-statements with Optional
      */
-    public CompletableFuture<Void> logAuthenticationFailure(String username, String clientIP, 
+    public CompletableFuture<Void> logAuthenticationFailure(String username, String clientIP,
                                                           String userAgent, String reason) {
-        return CompletableFuture.runAsync(() -> {
-            if (!auditEnabled) return;
-            
-            Map<String, Object> data = Map.of(
-                "username", username,
-                "clientIP", clientIP,
-                "userAgent", userAgent,
-                "timestamp", Instant.now(),
-                "success", false,
-                "reason", reason,
-                "sessionId", generateSessionId()
-            );
-            
-            AuditEvent event = new AuditEvent(username, "AUTHENTICATION_FAILURE", data);
-            auditEventRepository.add(event);
-            
-            // Track failure attempts for threat detection
-            long userFailures = userFailureAttempts.computeIfAbsent(username, 
-                k -> new AtomicLong(0)).incrementAndGet();
-            long ipRequests = ipRequestCounts.computeIfAbsent(clientIP, 
-                k -> new AtomicLong(0)).incrementAndGet();
-            
-            // Threat detection
-            if (userFailures >= alertThreshold) {
-                logSuspiciousActivity("MULTIPLE_FAILED_LOGINS", username, clientIP, 
-                    "User exceeded failed login threshold: " + userFailures);
-            }
-            
-            if (ipRequests >= alertThreshold * 2) {
-                logSuspiciousActivity("IP_BRUTE_FORCE", username, clientIP, 
-                    "IP exceeded request threshold: " + ipRequests);
-            }
-            
-            log.warn("Authentication failed - User: {} IP: {} Reason: {} Attempts: {}", 
-                username, clientIP, reason, userFailures);
-            
-            failedAuthenticationAttempts.incrementAndGet();
-            totalSecurityEvents.incrementAndGet();
-        });
+        return CompletableFuture.runAsync(() ->
+            // Eliminates audit check with Optional.filter()
+            Optional.of(auditEnabled)
+                .filter(Boolean::booleanValue)
+                .ifPresent(enabled -> {
+                    Map<String, Object> data = Map.of(
+                        "username", username,
+                        "clientIP", clientIP,
+                        "userAgent", userAgent,
+                        "timestamp", Instant.now(),
+                        "success", false,
+                        "reason", reason,
+                        "sessionId", generateSessionId()
+                    );
+
+                    AuditEvent event = new AuditEvent(username, "AUTHENTICATION_FAILURE", data);
+                    auditEventRepository.add(event);
+
+                    // Track failure attempts for threat detection
+                    long userFailures = userFailureAttempts.computeIfAbsent(username,
+                        k -> new AtomicLong(0)).incrementAndGet();
+                    long ipRequests = ipRequestCounts.computeIfAbsent(clientIP,
+                        k -> new AtomicLong(0)).incrementAndGet();
+
+                    // Threat detection - eliminates if-statements with Optional.filter()
+                    Optional.of(userFailures)
+                        .filter(failures -> failures >= alertThreshold)
+                        .ifPresent(failures -> logSuspiciousActivity("MULTIPLE_FAILED_LOGINS", username, clientIP,
+                            "User exceeded failed login threshold: " + failures));
+
+                    Optional.of(ipRequests)
+                        .filter(requests -> requests >= alertThreshold * 2)
+                        .ifPresent(requests -> logSuspiciousActivity("IP_BRUTE_FORCE", username, clientIP,
+                            "IP exceeded request threshold: " + requests));
+
+                    log.warn("Authentication failed - User: {} IP: {} Reason: {} Attempts: {}",
+                        username, clientIP, reason, userFailures);
+
+                    failedAuthenticationAttempts.incrementAndGet();
+                    totalSecurityEvents.incrementAndGet();
+                })
+        );
     }
     
     /**
-     * Log access denied events
+     * Log access denied events - eliminates if-statement with Optional
      */
-    public CompletableFuture<Void> logAccessDenied(String username, String resource, 
+    public CompletableFuture<Void> logAccessDenied(String username, String resource,
                                                  String action, String clientIP) {
-        return CompletableFuture.runAsync(() -> {
-            if (!auditEnabled) return;
-            
-            Map<String, Object> data = Map.of(
-                "username", username,
-                "resource", resource,
-                "action", action,
-                "clientIP", clientIP,
-                "timestamp", Instant.now(),
-                "eventType", "ACCESS_DENIED"
-            );
-            
-            AuditEvent event = new AuditEvent(username, "ACCESS_DENIED", data);
-            auditEventRepository.add(event);
-            
-            log.warn("Access denied - User: {} Resource: {} Action: {} IP: {}", 
-                username, resource, action, clientIP);
-            
-            accessDeniedEvents.incrementAndGet();
-            totalSecurityEvents.incrementAndGet();
-        });
+        return CompletableFuture.runAsync(() ->
+            Optional.of(auditEnabled)
+                .filter(Boolean::booleanValue)
+                .ifPresent(enabled -> {
+                    Map<String, Object> data = Map.of(
+                        "username", username,
+                        "resource", resource,
+                        "action", action,
+                        "clientIP", clientIP,
+                        "timestamp", Instant.now(),
+                        "eventType", "ACCESS_DENIED"
+                    );
+
+                    AuditEvent event = new AuditEvent(username, "ACCESS_DENIED", data);
+                    auditEventRepository.add(event);
+
+                    log.warn("Access denied - User: {} Resource: {} Action: {} IP: {}",
+                        username, resource, action, clientIP);
+
+                    accessDeniedEvents.incrementAndGet();
+                    totalSecurityEvents.incrementAndGet();
+                })
+        );
     }
     
     /**
-     * Log privileged operations
+     * Log privileged operations - eliminates if-statement with Optional
      */
-    public CompletableFuture<Void> logPrivilegedOperation(String username, String operation, 
+    public CompletableFuture<Void> logPrivilegedOperation(String username, String operation,
                                                         String details, String clientIP) {
-        return CompletableFuture.runAsync(() -> {
-            if (!auditEnabled) return;
-            
-            Map<String, Object> data = Map.of(
-                "username", username,
-                "operation", operation,
-                "details", details,
-                "clientIP", clientIP,
-                "timestamp", Instant.now(),
-                "privileged", true
-            );
-            
-            AuditEvent event = new AuditEvent(username, "PRIVILEGED_OPERATION", data);
-            auditEventRepository.add(event);
-            
-            log.info("Privileged operation - User: {} Operation: {} IP: {}", 
-                username, operation, clientIP);
-            
-            totalSecurityEvents.incrementAndGet();
-        });
+        return CompletableFuture.runAsync(() ->
+            Optional.of(auditEnabled)
+                .filter(Boolean::booleanValue)
+                .ifPresent(enabled -> {
+                    Map<String, Object> data = Map.of(
+                        "username", username,
+                        "operation", operation,
+                        "details", details,
+                        "clientIP", clientIP,
+                        "timestamp", Instant.now(),
+                        "privileged", true
+                    );
+
+                    AuditEvent event = new AuditEvent(username, "PRIVILEGED_OPERATION", data);
+                    auditEventRepository.add(event);
+
+                    log.info("Privileged operation - User: {} Operation: {} IP: {}",
+                        username, operation, clientIP);
+
+                    totalSecurityEvents.incrementAndGet();
+                })
+        );
     }
     
     /**
-     * Log suspicious activity with automated alerting
+     * Log suspicious activity with automated alerting - eliminates if-statement with Optional
      */
-    public CompletableFuture<Void> logSuspiciousActivity(String threatType, String username, 
+    public CompletableFuture<Void> logSuspiciousActivity(String threatType, String username,
                                                        String clientIP, String description) {
-        return CompletableFuture.runAsync(() -> {
-            if (!auditEnabled) return;
-            
-            Map<String, Object> data = Map.of(
-                "threatType", threatType,
-                "username", username,
-                "clientIP", clientIP,
-                "description", description,
-                "timestamp", Instant.now(),
-                "severity", "HIGH",
-                "automated", true
-            );
-            
-            AuditEvent event = new AuditEvent(username, "SUSPICIOUS_ACTIVITY", data);
-            auditEventRepository.add(event);
-            
-            // Critical alert logging
-            log.error("SECURITY ALERT - Threat: {} User: {} IP: {} Description: {}", 
-                threatType, username, clientIP, description);
-            
-            suspiciousActivityDetected.incrementAndGet();
-            totalSecurityEvents.incrementAndGet();
-            
-            // In production, this would trigger alerting system
-            // alertingService.sendSecurityAlert(threatType, data);
-        });
+        return CompletableFuture.runAsync(() ->
+            Optional.of(auditEnabled)
+                .filter(Boolean::booleanValue)
+                .ifPresent(enabled -> {
+                    Map<String, Object> data = Map.of(
+                        "threatType", threatType,
+                        "username", username,
+                        "clientIP", clientIP,
+                        "description", description,
+                        "timestamp", Instant.now(),
+                        "severity", "HIGH",
+                        "automated", true
+                    );
+
+                    AuditEvent event = new AuditEvent(username, "SUSPICIOUS_ACTIVITY", data);
+                    auditEventRepository.add(event);
+
+                    // Critical alert logging
+                    log.error("SECURITY ALERT - Threat: {} User: {} IP: {} Description: {}",
+                        threatType, username, clientIP, description);
+
+                    suspiciousActivityDetected.incrementAndGet();
+                    totalSecurityEvents.incrementAndGet();
+
+                    // In production, this would trigger alerting system
+                    // alertingService.sendSecurityAlert(threatType, data);
+                })
+        );
     }
     
     /**
-     * Log data access events for compliance
+     * Log data access events for compliance - eliminates if-statement with Optional
      */
-    public CompletableFuture<Void> logDataAccess(String username, String dataType, 
+    public CompletableFuture<Void> logDataAccess(String username, String dataType,
                                                String operation, String recordId) {
-        return CompletableFuture.runAsync(() -> {
-            if (!auditEnabled) return;
-            
-            Map<String, Object> data = Map.of(
-                "username", username,
-                "dataType", dataType,
-                "operation", operation,
-                "recordId", recordId,
-                "timestamp", Instant.now(),
-                "compliance", true
-            );
-            
-            AuditEvent event = new AuditEvent(username, "DATA_ACCESS", data);
-            auditEventRepository.add(event);
-            
-            log.debug("Data access - User: {} Type: {} Operation: {} ID: {}", 
-                username, dataType, operation, recordId);
-            
-            totalSecurityEvents.incrementAndGet();
-        });
+        return CompletableFuture.runAsync(() ->
+            Optional.of(auditEnabled)
+                .filter(Boolean::booleanValue)
+                .ifPresent(enabled -> {
+                    Map<String, Object> data = Map.of(
+                        "username", username,
+                        "dataType", dataType,
+                        "operation", operation,
+                        "recordId", recordId,
+                        "timestamp", Instant.now(),
+                        "compliance", true
+                    );
+
+                    AuditEvent event = new AuditEvent(username, "DATA_ACCESS", data);
+                    auditEventRepository.add(event);
+
+                    log.debug("Data access - User: {} Type: {} Operation: {} ID: {}",
+                        username, dataType, operation, recordId);
+
+                    totalSecurityEvents.incrementAndGet();
+                })
+        );
     }
     
     /**

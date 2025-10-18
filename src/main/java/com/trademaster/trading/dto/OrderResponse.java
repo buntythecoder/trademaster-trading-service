@@ -8,6 +8,7 @@ import com.trademaster.trading.model.TimeInForce;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.Optional;
 
 /**
  * Order Response DTO
@@ -151,15 +152,21 @@ public record OrderResponse(
 ) {
     
     /**
-     * Order summary for quick display
+     * Order summary for quick display - eliminates nested ternaries with Optional
      */
     public String getOrderSummary() {
-        return String.format("%s %d %s @ %s", 
+        String priceDisplay = Optional.of(orderType)
+            .filter(type -> type == OrderType.MARKET)
+            .map(type -> "MARKET")
+            .orElseGet(() -> Optional.ofNullable(limitPrice)
+                .map(BigDecimal::toString)
+                .orElse("N/A"));
+
+        return String.format("%s %d %s @ %s",
                            side.getDisplayName(),
                            quantity,
                            symbol,
-                           orderType == OrderType.MARKET ? "MARKET" : 
-                           (limitPrice != null ? limitPrice.toString() : "N/A"));
+                           priceDisplay);
     }
     
     /**

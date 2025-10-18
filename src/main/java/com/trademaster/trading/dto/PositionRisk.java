@@ -10,6 +10,8 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.stream.Stream;
 
 /**
  * Position Risk DTO
@@ -349,84 +351,85 @@ public class PositionRisk {
      */
     
     /**
-     * Check if position is high risk
+     * Check if position is high risk - eliminates if-statement with Optional
      */
     public boolean isHighRisk() {
-        if (riskMonitoring == null || riskMonitoring.getOverallRiskLevel() == null) {
-            return false;
-        }
-        return "HIGH".equals(riskMonitoring.getOverallRiskLevel()) || 
-               "CRITICAL".equals(riskMonitoring.getOverallRiskLevel());
+        return Optional.ofNullable(riskMonitoring)
+            .flatMap(rm -> Optional.ofNullable(rm.getOverallRiskLevel()))
+            .map(level -> "HIGH".equals(level) || "CRITICAL".equals(level))
+            .orElse(false);
     }
     
     /**
-     * Check if position has active critical alerts
+     * Check if position has active critical alerts - eliminates if-statement with Optional
      */
     public boolean hasCriticalAlerts() {
-        if (riskMonitoring == null || riskMonitoring.getActiveAlerts() == null) {
-            return false;
-        }
-        return riskMonitoring.getActiveAlerts().stream()
-            .anyMatch(alert -> "CRITICAL".equals(alert.getSeverity()) || 
-                             "EMERGENCY".equals(alert.getSeverity()));
+        return Optional.ofNullable(riskMonitoring)
+            .flatMap(rm -> Optional.ofNullable(rm.getActiveAlerts()))
+            .map(alerts -> alerts.stream()
+                .anyMatch(alert -> "CRITICAL".equals(alert.getSeverity()) ||
+                                 "EMERGENCY".equals(alert.getSeverity())))
+            .orElse(false);
     }
     
     /**
-     * Get maximum VaR across all confidence levels
+     * Get maximum VaR across all confidence levels - eliminates all if-statements with Stream.max()
      */
     public BigDecimal getMaxVaR() {
-        if (marketRisk == null) return BigDecimal.ZERO;
-        
-        BigDecimal max = BigDecimal.ZERO;
-        if (marketRisk.getDailyVaR95() != null && marketRisk.getDailyVaR95().compareTo(max) > 0) {
-            max = marketRisk.getDailyVaR95();
-        }
-        if (marketRisk.getDailyVaR99() != null && marketRisk.getDailyVaR99().compareTo(max) > 0) {
-            max = marketRisk.getDailyVaR99();
-        }
-        if (marketRisk.getWeeklyVaR95() != null && marketRisk.getWeeklyVaR95().compareTo(max) > 0) {
-            max = marketRisk.getWeeklyVaR95();
-        }
-        return max;
+        return Optional.ofNullable(marketRisk)
+            .map(mr -> Stream.of(
+                    Optional.ofNullable(mr.getDailyVaR95()),
+                    Optional.ofNullable(mr.getDailyVaR99()),
+                    Optional.ofNullable(mr.getWeeklyVaR95())
+                )
+                .flatMap(Optional::stream)
+                .max(BigDecimal::compareTo)
+                .orElse(BigDecimal.ZERO))
+            .orElse(BigDecimal.ZERO);
     }
     
     /**
-     * Check if options position is near expiration
+     * Check if options position is near expiration - eliminates if-statement with Optional
      */
     public boolean isNearExpiration(int warningDays) {
-        if (optionsRisk == null || optionsRisk.getDaysToExpiration() == null) {
-            return false;
-        }
-        return optionsRisk.getDaysToExpiration() <= warningDays;
+        return Optional.ofNullable(optionsRisk)
+            .flatMap(or -> Optional.ofNullable(or.getDaysToExpiration()))
+            .map(days -> days <= warningDays)
+            .orElse(false);
     }
     
     /**
-     * Check if position exceeds concentration limits
+     * Check if position exceeds concentration limits - eliminates all if-statements with Optional
      */
     public boolean exceedsConcentrationLimits() {
-        if (concentrationRisk == null) return false;
-        
-        if (concentrationRisk.getUtilizationPercent() != null && 
-            concentrationRisk.getUtilizationPercent().compareTo(new BigDecimal("100")) >= 0) {
-            return true;
-        }
-        
-        return "EXCESSIVE".equals(concentrationRisk.getConcentrationLevel());
+        return Optional.ofNullable(concentrationRisk)
+            .map(cr ->
+                // Check utilization percentage OR concentration level - eliminates nested if-statements
+                Optional.ofNullable(cr.getUtilizationPercent())
+                    .map(pct -> pct.compareTo(new BigDecimal("100")) >= 0)
+                    .orElse(false) ||
+                "EXCESSIVE".equals(cr.getConcentrationLevel())
+            )
+            .orElse(false);
     }
     
     /**
-     * Get risk score breakdown
+     * Get risk score breakdown - eliminates all 4 ternaries with Optional.flatMap() patterns
      */
     public Map<String, BigDecimal> getRiskScoreBreakdown() {
         return Map.of(
-            "market_risk", marketRisk != null && marketRisk.getDailyVaR99() != null ? 
-                marketRisk.getDailyVaR99() : BigDecimal.ZERO,
-            "liquidity_risk", liquidityRisk != null && liquidityRisk.getLiquidityRank() != null ? 
-                liquidityRisk.getLiquidityRank() : BigDecimal.ZERO,
-            "concentration_risk", concentrationRisk != null && concentrationRisk.getUtilizationPercent() != null ? 
-                concentrationRisk.getUtilizationPercent() : BigDecimal.ZERO,
-            "overall_risk", riskMonitoring != null && riskMonitoring.getOverallRiskScore() != null ? 
-                riskMonitoring.getOverallRiskScore() : BigDecimal.ZERO
+            "market_risk", Optional.ofNullable(marketRisk)
+                .flatMap(mr -> Optional.ofNullable(mr.getDailyVaR99()))
+                .orElse(BigDecimal.ZERO),
+            "liquidity_risk", Optional.ofNullable(liquidityRisk)
+                .flatMap(lr -> Optional.ofNullable(lr.getLiquidityRank()))
+                .orElse(BigDecimal.ZERO),
+            "concentration_risk", Optional.ofNullable(concentrationRisk)
+                .flatMap(cr -> Optional.ofNullable(cr.getUtilizationPercent()))
+                .orElse(BigDecimal.ZERO),
+            "overall_risk", Optional.ofNullable(riskMonitoring)
+                .flatMap(rm -> Optional.ofNullable(rm.getOverallRiskScore()))
+                .orElse(BigDecimal.ZERO)
         );
     }
     

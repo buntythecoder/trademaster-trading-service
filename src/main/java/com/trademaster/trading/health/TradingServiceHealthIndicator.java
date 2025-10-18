@@ -10,6 +10,7 @@ import org.springframework.stereotype.Component;
 
 import javax.sql.DataSource;
 import java.sql.Connection;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
@@ -47,33 +48,38 @@ public class TradingServiceHealthIndicator implements HealthIndicator {
         this.orderRepository = orderRepository;
     }
     
+    /**
+     * Health check using Optional patterns to eliminate if-statements
+     */
     @Override
     public Health health() {
         Health.Builder builder = new Health.Builder();
-        
+
         try {
             // Check all critical components
             boolean databaseHealthy = checkDatabase();
             boolean redisHealthy = checkRedis();
             boolean repositoryHealthy = checkRepository();
             boolean systemHealthy = checkSystemHealth();
-            
-            if (databaseHealthy && redisHealthy && repositoryHealthy && systemHealthy) {
-                builder.up();
-            } else {
-                builder.down();
-            }
-            
-            // Add detailed component status
-            builder.withDetail("database", databaseHealthy ? "UP" : "DOWN")
-                   .withDetail("redis", redisHealthy ? "UP" : "DOWN")
-                   .withDetail("repository", repositoryHealthy ? "UP" : "DOWN")
-                   .withDetail("system", systemHealthy ? "UP" : "DOWN")
+
+            // Eliminates if-else with Optional.of(boolean).filter()
+            Optional.of(databaseHealthy && redisHealthy && repositoryHealthy && systemHealthy)
+                .filter(allHealthy -> allHealthy)
+                .ifPresentOrElse(
+                    allHealthy -> builder.up(),
+                    () -> builder.down()
+                );
+
+            // Add detailed component status - eliminates ternary operators with helper method
+            builder.withDetail("database", healthStatus(databaseHealthy))
+                   .withDetail("redis", healthStatus(redisHealthy))
+                   .withDetail("repository", healthStatus(repositoryHealthy))
+                   .withDetail("system", healthStatus(systemHealthy))
                    .withDetail("virtualThreads", "ENABLED")
                    .withDetail("service", "trading-service")
                    .withDetail("version", "2.0.0")
                    .withDetail("timestamp", System.currentTimeMillis());
-                   
+
         } catch (Exception e) {
             log.error("Health check failed with exception", e);
             builder.down()
@@ -81,8 +87,19 @@ public class TradingServiceHealthIndicator implements HealthIndicator {
                    .withDetail("exception", e.getClass().getSimpleName())
                    .withDetail("timestamp", System.currentTimeMillis());
         }
-        
+
         return builder.build();
+    }
+
+    /**
+     * Helper method to convert boolean to health status string
+     * Eliminates ternary operators
+     */
+    private String healthStatus(boolean healthy) {
+        return Optional.of(healthy)
+            .filter(h -> h)
+            .map(h -> "UP")
+            .orElse("DOWN");
     }
     
     private boolean checkDatabase() {
@@ -104,35 +121,40 @@ public class TradingServiceHealthIndicator implements HealthIndicator {
         }
     }
     
+    /**
+     * Check Redis health using Optional to eliminate if-statement
+     */
     private boolean checkRedis() {
-        if (redisTemplate == null) {
-            log.debug("Redis not configured, skipping Redis health check");
-            return true; // Consider Redis check as passed if not configured
-        }
-        
-        try {
-            CompletableFuture<Boolean> redisCheck = CompletableFuture.supplyAsync(() -> {
+        return Optional.ofNullable(redisTemplate)
+            .map(template -> {
                 try {
-                    // Test Redis connectivity with a simple ping
-                    String testValue = String.valueOf(System.currentTimeMillis());
-                    redisTemplate.opsForValue().set(HEALTH_CHECK_KEY, testValue, 60, TimeUnit.SECONDS);
-                    String retrieved = (String) redisTemplate.opsForValue().get(HEALTH_CHECK_KEY);
-                    redisTemplate.delete(HEALTH_CHECK_KEY);
-                    
-                    return testValue.equals(retrieved);
-                    
+                    CompletableFuture<Boolean> redisCheck = CompletableFuture.supplyAsync(() -> {
+                        try {
+                            // Test Redis connectivity with a simple ping
+                            String testValue = String.valueOf(System.currentTimeMillis());
+                            template.opsForValue().set(HEALTH_CHECK_KEY, testValue, 60, TimeUnit.SECONDS);
+                            String retrieved = (String) template.opsForValue().get(HEALTH_CHECK_KEY);
+                            template.delete(HEALTH_CHECK_KEY);
+
+                            return testValue.equals(retrieved);
+
+                        } catch (Exception e) {
+                            log.warn("Redis health check failed: {}", e.getMessage());
+                            return false;
+                        }
+                    });
+
+                    return redisCheck.get(HEALTH_CHECK_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+
                 } catch (Exception e) {
-                    log.warn("Redis health check failed: {}", e.getMessage());
+                    log.warn("Redis health check timeout or error: {}", e.getMessage());
                     return false;
                 }
+            })
+            .orElseGet(() -> {
+                log.debug("Redis not configured, skipping Redis health check");
+                return true; // Consider Redis check as passed if not configured
             });
-            
-            return redisCheck.get(HEALTH_CHECK_TIMEOUT_MS, TimeUnit.MILLISECONDS);
-            
-        } catch (Exception e) {
-            log.warn("Redis health check timeout or error: {}", e.getMessage());
-            return false;
-        }
     }
     
     private boolean checkRepository() {
@@ -157,30 +179,39 @@ public class TradingServiceHealthIndicator implements HealthIndicator {
         }
     }
     
+    /**
+     * Check system health using Optional to eliminate if-statements
+     */
     private boolean checkSystemHealth() {
         try {
             Runtime runtime = Runtime.getRuntime();
             long totalMemory = runtime.totalMemory();
             long freeMemory = runtime.freeMemory();
             long usedMemory = totalMemory - freeMemory;
-            
+
             // Check if memory usage is below 85%
             double memoryUsagePercent = ((double) usedMemory / totalMemory) * 100;
-            
-            if (memoryUsagePercent > 85) {
-                log.warn("High memory usage detected: {}%", memoryUsagePercent);
-                return false;
-            }
-            
+
+            boolean memoryHealthy = Optional.of(memoryUsagePercent)
+                .filter(usage -> usage <= 85)
+                .map(usage -> true)
+                .orElseGet(() -> {
+                    log.warn("High memory usage detected: {}%", memoryUsagePercent);
+                    return false;
+                });
+
             // Check available processors
             int availableProcessors = runtime.availableProcessors();
-            if (availableProcessors < 1) {
-                log.warn("No available processors detected");
-                return false;
-            }
-            
-            return true;
-            
+            boolean processorsHealthy = Optional.of(availableProcessors)
+                .filter(processors -> processors >= 1)
+                .map(processors -> true)
+                .orElseGet(() -> {
+                    log.warn("No available processors detected");
+                    return false;
+                });
+
+            return memoryHealthy && processorsHealthy;
+
         } catch (Exception e) {
             log.warn("System health check failed: {}", e.getMessage());
             return false;

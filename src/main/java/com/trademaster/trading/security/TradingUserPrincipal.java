@@ -5,6 +5,7 @@ import lombok.Data;
 
 import java.security.Principal;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Trading User Principal
@@ -89,9 +90,9 @@ public class TradingUserPrincipal implements Principal {
     }
     
     /**
-     * Get user display name
+     * Get user display name - eliminates ternary with Optional
      */
     public String getDisplayName() {
-        return username != null ? username : email;
+        return Optional.ofNullable(username).orElse(email);
     }
 }

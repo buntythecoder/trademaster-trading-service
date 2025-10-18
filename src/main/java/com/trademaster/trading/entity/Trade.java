@@ -14,6 +14,7 @@ import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.Optional;
 
 /**
  * Trade Entity
@@ -159,11 +160,11 @@ public class Trade {
     // Helper methods
     
     /**
-     * Calculate total charges (commission + taxes)
+     * Calculate total charges (commission + taxes) - eliminates 2 ternaries with Optional
      */
     public BigDecimal getTotalCharges() {
-        BigDecimal comm = commission != null ? commission : BigDecimal.ZERO;
-        BigDecimal tax = taxes != null ? taxes : BigDecimal.ZERO;
+        BigDecimal comm = Optional.ofNullable(commission).orElse(BigDecimal.ZERO);
+        BigDecimal tax = Optional.ofNullable(taxes).orElse(BigDecimal.ZERO);
         return comm.add(tax);
     }
     
@@ -182,12 +183,13 @@ public class Trade {
     }
     
     /**
-     * Calculate net amount (trade value - charges for sell, trade value + charges for buy)
+     * Calculate net amount - eliminates ternary with Optional (Complexity: 2, Lines: 6)
      */
     public BigDecimal calculateNetAmount() {
         BigDecimal totalCharges = getTotalCharges();
-        return isBuy() ? 
-            tradeValue.add(totalCharges) : 
-            tradeValue.subtract(totalCharges);
+        return Optional.of(isBuy())
+            .filter(Boolean::booleanValue)
+            .map(buy -> tradeValue.add(totalCharges))
+            .orElse(tradeValue.subtract(totalCharges));
     }
 }

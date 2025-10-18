@@ -9,6 +9,8 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.stream.Stream;
 
 /**
  * Market Data Snapshot DTO
@@ -300,76 +302,73 @@ public class MarketDataSnapshot {
     }
     
     /**
-     * Check if data is stale
+     * Check if data is stale - eliminates if-statement with Optional
      */
     public boolean isDataStale(long maxAgeMillis) {
-        if (timestamp == null) return true;
-        return System.currentTimeMillis() - timestamp.toEpochMilli() > maxAgeMillis;
+        return Optional.ofNullable(timestamp)
+            .map(ts -> System.currentTimeMillis() - ts.toEpochMilli() > maxAgeMillis)
+            .orElse(true);
     }
     
     /**
-     * Get current spread in basis points
+     * Get current spread in basis points - eliminates if-statement with Optional chains
      */
     public BigDecimal getSpreadBps() {
-        if (orderBook == null || orderBook.getSpread() == null || 
-            priceData == null || priceData.getMidPrice() == null ||
-            priceData.getMidPrice().compareTo(BigDecimal.ZERO) == 0) {
-            return BigDecimal.ZERO;
-        }
-        
-        return orderBook.getSpread()
-               .divide(priceData.getMidPrice(), 6, java.math.RoundingMode.HALF_UP)
-               .multiply(BigDecimal.valueOf(10000)); // Convert to basis points
+        return Optional.ofNullable(orderBook)
+            .flatMap(ob -> Optional.ofNullable(ob.getSpread())
+                .flatMap(spread -> Optional.ofNullable(priceData)
+                    .flatMap(pd -> Optional.ofNullable(pd.getMidPrice())
+                        .filter(mid -> mid.compareTo(BigDecimal.ZERO) != 0)
+                        .map(mid -> spread.divide(mid, 6, java.math.RoundingMode.HALF_UP)
+                            .multiply(BigDecimal.valueOf(10000)))))) // Convert to basis points
+            .orElse(BigDecimal.ZERO);
     }
     
     /**
-     * Check if order book is imbalanced
+     * Check if order book is imbalanced - eliminates if-statement with Optional
      */
     public boolean isOrderBookImbalanced() {
-        if (orderBook == null || orderBook.getImbalance() == null) {
-            return false;
-        }
-        return orderBook.getImbalance().abs().compareTo(new BigDecimal("0.6")) > 0; // >60% imbalance
+        return Optional.ofNullable(orderBook)
+            .flatMap(ob -> Optional.ofNullable(ob.getImbalance())
+                .map(imb -> imb.abs().compareTo(new BigDecimal("0.6")) > 0)) // >60% imbalance
+            .orElse(false);
     }
     
     /**
-     * Get best venue for buying
+     * Get best venue for buying - eliminates if-statement with Optional
      */
     public String getBestBuyVenue() {
-        if (venueData == null || venueData.isEmpty()) {
-            return null;
-        }
-        
-        return venueData.stream()
-               .filter(venue -> venue.getAskPrice() != null)
-               .min((v1, v2) -> v1.getAskPrice().compareTo(v2.getAskPrice()))
-               .map(VenueData::getVenueName)
-               .orElse(null);
+        return Optional.ofNullable(venueData)
+            .filter(venues -> !venues.isEmpty())
+            .flatMap(venues -> venues.stream()
+                .filter(venue -> venue.getAskPrice() != null)
+                .min((v1, v2) -> v1.getAskPrice().compareTo(v2.getAskPrice()))
+                .map(VenueData::getVenueName))
+            .orElse(null);
     }
     
     /**
-     * Get best venue for selling
+     * Get best venue for selling - eliminates if-statement with Optional
      */
     public String getBestSellVenue() {
-        if (venueData == null || venueData.isEmpty()) {
-            return null;
-        }
-        
-        return venueData.stream()
-               .filter(venue -> venue.getBidPrice() != null)
-               .max((v1, v2) -> v1.getBidPrice().compareTo(v2.getBidPrice()))
-               .map(VenueData::getVenueName)
-               .orElse(null);
+        return Optional.ofNullable(venueData)
+            .filter(venues -> !venues.isEmpty())
+            .flatMap(venues -> venues.stream()
+                .filter(venue -> venue.getBidPrice() != null)
+                .max((v1, v2) -> v1.getBidPrice().compareTo(v2.getBidPrice()))
+                .map(VenueData::getVenueName))
+            .orElse(null);
     }
     
     /**
-     * Calculate market cap (if applicable)
+     * Calculate market cap (if applicable) - eliminates if-statement with Optional
      */
     public BigDecimal getMarketCap(Long sharesOutstanding) {
-        if (priceData == null || priceData.getLastPrice() == null || sharesOutstanding == null) {
-            return null;
-        }
-        return priceData.getLastPrice().multiply(BigDecimal.valueOf(sharesOutstanding));
+        return Optional.ofNullable(priceData)
+            .flatMap(pd -> Optional.ofNullable(pd.getLastPrice())
+                .flatMap(lastPrice -> Optional.ofNullable(sharesOutstanding)
+                    .map(shares -> lastPrice.multiply(BigDecimal.valueOf(shares)))))
+            .orElse(null);
     }
     
     /**
@@ -382,43 +381,51 @@ public class MarketDataSnapshot {
     }
     
     /**
-     * Get liquidity assessment
+     * Get liquidity assessment - eliminates if-else chain with Stream pattern
      */
     public String getLiquidityAssessment() {
-        if (liquidity == null || liquidity.getLiquidityScore() == null) {
-            return "UNKNOWN";
-        }
-        
-        BigDecimal score = liquidity.getLiquidityScore();
-        if (score.compareTo(new BigDecimal("80")) >= 0) {
-            return "HIGH";
-        } else if (score.compareTo(new BigDecimal("50")) >= 0) {
-            return "MEDIUM";
-        } else {
-            return "LOW";
-        }
+        return Optional.ofNullable(liquidity)
+            .flatMap(liq -> Optional.ofNullable(liq.getLiquidityScore())
+                .map(score -> {
+                    record LiquidityThreshold(BigDecimal minScore, String assessment) {}
+
+                    return Stream.of(
+                        new LiquidityThreshold(new BigDecimal("80"), "HIGH"),
+                        new LiquidityThreshold(new BigDecimal("50"), "MEDIUM")
+                    )
+                    .filter(threshold -> score.compareTo(threshold.minScore()) >= 0)
+                    .findFirst()
+                    .map(LiquidityThreshold::assessment)
+                    .orElse("LOW");
+                }))
+            .orElse("UNKNOWN");
     }
     
     /**
-     * Get market data summary
+     * Get market data summary - eliminates all 7 ternary operators with Optional patterns
      */
     public Map<String, Object> getMarketSummary() {
         return Map.of(
-            "symbol", symbol != null ? symbol : "N/A",
-            "lastPrice", priceData != null && priceData.getLastPrice() != null ? 
-                        priceData.getLastPrice() : BigDecimal.ZERO,
-            "change", priceData != null && priceData.getChange() != null ? 
-                     priceData.getChange() : BigDecimal.ZERO,
-            "volume", volumeData != null && volumeData.getVolume() != null ? 
-                     volumeData.getVolume() : 0L,
-            "spread", orderBook != null && orderBook.getSpread() != null ? 
-                     orderBook.getSpread() : BigDecimal.ZERO,
-            "marketStatus", tradingInfo != null && tradingInfo.getMarketStatus() != null ? 
-                          tradingInfo.getMarketStatus() : "UNKNOWN",
+            "symbol", Optional.ofNullable(symbol).orElse("N/A"),
+            "lastPrice", Optional.ofNullable(priceData)
+                .flatMap(pd -> Optional.ofNullable(pd.getLastPrice()))
+                .orElse(BigDecimal.ZERO),
+            "change", Optional.ofNullable(priceData)
+                .flatMap(pd -> Optional.ofNullable(pd.getChange()))
+                .orElse(BigDecimal.ZERO),
+            "volume", Optional.ofNullable(volumeData)
+                .flatMap(vd -> Optional.ofNullable(vd.getVolume()))
+                .orElse(0L),
+            "spread", Optional.ofNullable(orderBook)
+                .flatMap(ob -> Optional.ofNullable(ob.getSpread()))
+                .orElse(BigDecimal.ZERO),
+            "marketStatus", Optional.ofNullable(tradingInfo)
+                .flatMap(ti -> Optional.ofNullable(ti.getMarketStatus()))
+                .orElse("UNKNOWN"),
             "liquidityAssessment", getLiquidityAssessment(),
             "isDataStale", isDataStale(5000), // 5 second staleness threshold
             "isTradingHalted", isTradingHalted(),
-            "timestamp", timestamp != null ? timestamp : Instant.EPOCH
+            "timestamp", Optional.ofNullable(timestamp).orElse(Instant.EPOCH)
         );
     }
     

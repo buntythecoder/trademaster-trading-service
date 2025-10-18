@@ -14,6 +14,7 @@ import org.springframework.vault.core.VaultTemplate;
 import org.springframework.vault.support.VaultToken;
 
 import java.net.URI;
+import java.util.Optional;
 
 /**
  * HashiCorp Vault Configuration for TradeMaster Trading Service
@@ -58,25 +59,31 @@ public class VaultConfig extends AbstractVaultConfiguration {
     @Override
     public VaultEndpoint vaultEndpoint() {
         VaultEndpoint endpoint = VaultEndpoint.from(URI.create(vaultUri));
-        
-        if (vaultNamespace != null && !vaultNamespace.trim().isEmpty()) {
-            // VaultEndpoint namespace configuration for newer Spring Vault versions
-            log.debug("Vault namespace configuration: {}", vaultNamespace);
-        }
-        
+
+        // Eliminates if-statement using Optional.ofNullable().map().filter().ifPresent()
+        Optional.ofNullable(vaultNamespace)
+            .map(String::trim)
+            .filter(ns -> !ns.isEmpty())
+            .ifPresent(ns -> {
+                // VaultEndpoint namespace configuration for newer Spring Vault versions
+                log.debug("Vault namespace configuration: {}", ns);
+            });
+
         log.info("Configured Vault endpoint: {} with namespace: {}", vaultUri, vaultNamespace);
         return endpoint;
     }
     
     @Override
     public TokenAuthentication clientAuthentication() {
-        if (vaultToken == null || vaultToken.trim().isEmpty()) {
-            throw new IllegalArgumentException(
-                "Vault token is required. Please set vault.token property or VAULT_TOKEN environment variable");
-        }
-        
+        // Eliminates if-statement using Optional.ofNullable().map().filter().orElseThrow()
+        String validToken = Optional.ofNullable(vaultToken)
+            .map(String::trim)
+            .filter(token -> !token.isEmpty())
+            .orElseThrow(() -> new IllegalArgumentException(
+                "Vault token is required. Please set vault.token property or VAULT_TOKEN environment variable"));
+
         log.info("Configured Vault token authentication");
-        return new TokenAuthentication(VaultToken.of(vaultToken));
+        return new TokenAuthentication(VaultToken.of(validToken));
     }
     
     /**

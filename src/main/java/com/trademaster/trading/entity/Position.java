@@ -334,7 +334,7 @@ public class Position {
     }
     
     /**
-     * Determine trade type using functional patterns (Complexity: 4, Lines: 8)
+     * Determine trade type using functional patterns - eliminates ternary (Complexity: 4, Lines: 10)
      */
     private TradeType determineTradeType(int currentQty, int newQuantity, int tradeQuantity) {
         return Optional.of(newQuantity)
@@ -343,8 +343,10 @@ public class Position {
             .orElseGet(() -> Optional.of(currentQty)
                 .filter(qty -> qty == 0)
                 .map(qty -> TradeType.NEW_POSITION)
-                .orElseGet(() -> isSameDirection(currentQty, tradeQuantity) ? 
-                    TradeType.ADD_TO_POSITION : TradeType.REDUCE_POSITION));
+                .orElseGet(() -> Optional.of(isSameDirection(currentQty, tradeQuantity))
+                    .filter(Boolean::booleanValue)
+                    .map(sameDir -> TradeType.ADD_TO_POSITION)
+                    .orElse(TradeType.REDUCE_POSITION)));
     }
     
     /**
@@ -692,7 +694,7 @@ public class Position {
     }
     
     /**
-     * New position strategy (Complexity: 2, Lines: 8)
+     * New position strategy - eliminates ternary (Complexity: 2, Lines: 9)
      */
     private static class NewPositionStrategy implements TradeStrategy {
         @Override
@@ -700,7 +702,10 @@ public class Position {
             position.quantity = params.newQuantity();
             position.averageCost = params.tradePrice();
             position.costBasis = params.tradePrice().multiply(BigDecimal.valueOf(Math.abs(params.newQuantity())));
-            position.side = params.newQuantity() > 0 ? PositionSide.LONG : PositionSide.SHORT;
+            position.side = Optional.of(params.newQuantity())
+                .filter(qty -> qty > 0)
+                .map(qty -> PositionSide.LONG)
+                .orElse(PositionSide.SHORT);
             position.firstTradeDate = params.tradeTime().atZone(java.time.ZoneId.systemDefault()).toLocalDate();
         }
     }
@@ -720,23 +725,28 @@ public class Position {
     }
     
     /**
-     * Reduce position strategy (Complexity: 6, Lines: 15)
+     * Reduce position strategy - eliminates ternary (Complexity: 6, Lines: 17)
      */
     private static class ReducePositionStrategy implements TradeStrategy {
         @Override
         public void execute(Position position, TradeParameters params) {
             int closedQuantity = Math.min(Math.abs(params.currentQuantity()), Math.abs(params.tradeQuantity()));
-            
+
             // Calculate realized P&L for closed portion
             Optional.ofNullable(position.averageCost)
                 .ifPresent(avgCost -> {
+                    int directionMultiplier = Optional.of(params.currentQuantity())
+                        .filter(qty -> qty > 0)
+                        .map(qty -> 1)
+                        .orElse(-1);
+
                     BigDecimal realizedPnL = params.tradePrice().subtract(avgCost)
                         .multiply(BigDecimal.valueOf(closedQuantity))
-                        .multiply(BigDecimal.valueOf(params.currentQuantity() > 0 ? 1 : -1));
+                        .multiply(BigDecimal.valueOf(directionMultiplier));
                     position.realizedPnL = Optional.ofNullable(position.realizedPnL)
                         .orElse(BigDecimal.ZERO).add(realizedPnL);
                 });
-            
+
             position.quantity = params.newQuantity();
             updateCostBasisAfterReduction(position, params);
         }

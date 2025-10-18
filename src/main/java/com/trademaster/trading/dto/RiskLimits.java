@@ -10,6 +10,7 @@ import java.time.Instant;
 import java.time.LocalTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Risk Limits DTO
@@ -275,14 +276,13 @@ public class RiskLimits {
      */
     
     /**
-     * Check if any position limits are breached
+     * Check if any position limits are breached - eliminates if-statement with Optional
      */
     public boolean hasPositionLimitBreach() {
-        if (sectorLimits != null) {
-            return sectorLimits.stream().anyMatch(limit -> 
-                limit.getBreached() != null && limit.getBreached());
-        }
-        return false;
+        return Optional.ofNullable(sectorLimits)
+            .map(limits -> limits.stream().anyMatch(limit ->
+                limit.getBreached() != null && limit.getBreached()))
+            .orElse(false);
     }
     
     /**
@@ -299,39 +299,34 @@ public class RiskLimits {
     }
     
     private BigDecimal calculatePositionUtilization() {
-        if (positionLimits == null || positionLimits.getMaxSinglePositionPercent() == null) {
-            return BigDecimal.ZERO;
-        }
-        
-        return new BigDecimal("75.0"); // Simulated current utilization
+        return Optional.ofNullable(positionLimits)
+            .flatMap(limits -> Optional.ofNullable(limits.getMaxSinglePositionPercent()))
+            .map(percent -> new BigDecimal("75.0")) // Simulated current utilization
+            .orElse(BigDecimal.ZERO);
     }
     
     private BigDecimal calculateLeverageUtilization() {
-        if (leverageLimits == null || leverageLimits.getMaxLeverageRatio() == null) {
-            return BigDecimal.ZERO;
-        }
-        
-        return new BigDecimal("60.0"); // Simulated current leverage utilization
+        return Optional.ofNullable(leverageLimits)
+            .flatMap(limits -> Optional.ofNullable(limits.getMaxLeverageRatio()))
+            .map(ratio -> new BigDecimal("60.0")) // Simulated current leverage utilization
+            .orElse(BigDecimal.ZERO);
     }
     
     private BigDecimal calculateSectorUtilization() {
-        if (sectorLimits == null || sectorLimits.isEmpty()) {
-            return BigDecimal.ZERO;
-        }
-        
-        return sectorLimits.stream()
-            .filter(limit -> limit.getUtilizationPercent() != null)
-            .map(SectorLimit::getUtilizationPercent)
-            .max(BigDecimal::compareTo)
+        return Optional.ofNullable(sectorLimits)
+            .filter(limits -> !limits.isEmpty())
+            .map(limits -> limits.stream()
+                .filter(limit -> limit.getUtilizationPercent() != null)
+                .map(SectorLimit::getUtilizationPercent)
+                .max(BigDecimal::compareTo)
+                .orElse(BigDecimal.ZERO))
             .orElse(BigDecimal.ZERO);
     }
     
     private BigDecimal calculateVelocityUtilization() {
-        if (velocityLimits == null) {
-            return BigDecimal.ZERO;
-        }
-        
-        return new BigDecimal("45.0"); // Simulated velocity utilization
+        return Optional.ofNullable(velocityLimits)
+            .map(limits -> new BigDecimal("45.0")) // Simulated velocity utilization
+            .orElse(BigDecimal.ZERO);
     }
     
     /**
@@ -344,49 +339,48 @@ public class RiskLimits {
     }
     
     /**
-     * Get effective limit considering dynamic adjustments
+     * Get effective limit considering dynamic adjustments - eliminates if-statement with Optional
      */
     public BigDecimal getEffectiveLimit(String limitType, BigDecimal baseLimit) {
-        if (dynamicAdjustments == null || !dynamicAdjustments.getEnableVolatilityAdjustment()) {
-            return baseLimit;
-        }
-        
-        BigDecimal multiplier = dynamicAdjustments.getVolatilityMultiplier();
-        return multiplier != null ? baseLimit.multiply(multiplier) : baseLimit;
+        return Optional.ofNullable(dynamicAdjustments)
+            .filter(DynamicAdjustments::getEnableVolatilityAdjustment)
+            .flatMap(adj -> Optional.ofNullable(adj.getVolatilityMultiplier())
+                .map(multiplier -> baseLimit.multiply(multiplier)))
+            .orElse(baseLimit);
     }
     
     /**
-     * Check if alerts should be triggered
+     * Check if alerts should be triggered - eliminates if-statement with Optional
      */
     public boolean shouldTriggerAlert(BigDecimal utilizationPercent) {
-        if (alertThresholds == null) return false;
-        
-        BigDecimal warningThreshold = alertThresholds.getWarningThresholdPercent();
-        return warningThreshold != null && 
-               utilizationPercent.compareTo(warningThreshold) >= 0;
+        return Optional.ofNullable(alertThresholds)
+            .flatMap(thresholds -> Optional.ofNullable(thresholds.getWarningThresholdPercent())
+                .map(warningThreshold -> utilizationPercent.compareTo(warningThreshold) >= 0))
+            .orElse(false);
     }
     
     /**
-     * Get active sector limits
+     * Get active sector limits - eliminates if-statement with Optional
      */
     public List<SectorLimit> getActiveSectorLimits() {
-        if (sectorLimits == null) return List.of();
-        return sectorLimits.stream()
-            .filter(limit -> limit.getMaxAllocationPercent() != null)
-            .toList();
+        return Optional.ofNullable(sectorLimits)
+            .map(limits -> limits.stream()
+                .filter(limit -> limit.getMaxAllocationPercent() != null)
+                .toList())
+            .orElse(List.of());
     }
     
     /**
-     * Get limits summary
+     * Get limits summary - eliminates all 4 ternaries with Optional patterns
      */
     public Map<String, Object> getLimitsSummary() {
         return Map.of(
-            "profileType", profileType != null ? profileType : "UNKNOWN",
-            "active", active != null ? active : false,
-            "sectorLimitsCount", sectorLimits != null ? sectorLimits.size() : 0,
-            "customLimitsCount", customLimits != null ? customLimits.size() : 0,
+            "profileType", Optional.ofNullable(profileType).orElse("UNKNOWN"),
+            "active", Optional.ofNullable(active).orElse(false),
+            "sectorLimitsCount", Optional.ofNullable(sectorLimits).map(List::size).orElse(0),
+            "customLimitsCount", Optional.ofNullable(customLimits).map(List::size).orElse(0),
             "hasPositionLimitBreach", hasPositionLimitBreach(),
-            "dynamicAdjustmentsEnabled", dynamicAdjustments != null && 
+            "dynamicAdjustmentsEnabled", dynamicAdjustments != null &&
                                        dynamicAdjustments.getEnableVolatilityAdjustment()
         );
     }

@@ -12,6 +12,7 @@ import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.Optional;
 
 /**
  * Simplified Risk Limit Entity (Aligned with Migration Schema)
@@ -122,49 +123,52 @@ public class SimplifiedRiskLimit {
     
     /**
      * Check if order value exceeds single order limit
+     * Uses Optional to eliminate if-statement
      */
     public boolean exceedsSingleOrderLimit(BigDecimal orderValue) {
-        if (maxSingleOrderValue == null || orderValue == null) {
-            return false;
-        }
-        return orderValue.compareTo(maxSingleOrderValue) > 0;
+        return Optional.ofNullable(maxSingleOrderValue)
+            .flatMap(maxLimit -> Optional.ofNullable(orderValue)
+                .map(value -> value.compareTo(maxLimit) > 0))
+            .orElse(false);
     }
     
     /**
      * Check if position value exceeds maximum position limit
+     * Uses Optional to eliminate if-statement
      */
     public boolean exceedsPositionLimit(BigDecimal positionValue) {
-        if (maxPositionValue == null || positionValue == null) {
-            return false;
-        }
-        return positionValue.compareTo(maxPositionValue) > 0;
+        return Optional.ofNullable(maxPositionValue)
+            .flatMap(maxLimit -> Optional.ofNullable(positionValue)
+                .map(value -> value.compareTo(maxLimit) > 0))
+            .orElse(false);
     }
     
     /**
      * Check if daily trade count exceeds limit
+     * Uses Optional to eliminate if-statement
      */
     public boolean exceedsDailyTradeLimit(int currentDailyTrades) {
-        if (maxDailyTrades == null) {
-            return false;
-        }
-        return currentDailyTrades >= maxDailyTrades;
+        return Optional.ofNullable(maxDailyTrades)
+            .map(maxTrades -> currentDailyTrades >= maxTrades)
+            .orElse(false);
     }
     
     /**
      * Check if open order count exceeds limit
+     * Uses Optional to eliminate if-statement
      */
     public boolean exceedsOpenOrderLimit(int currentOpenOrders) {
-        if (maxOpenOrders == null) {
-            return false;
-        }
-        return currentOpenOrders >= maxOpenOrders;
+        return Optional.ofNullable(maxOpenOrders)
+            .map(maxOrders -> currentOpenOrders >= maxOrders)
+            .orElse(false);
     }
     
     /**
      * Get available day trading buying power
+     * Uses Optional to eliminate ternary operator
      */
     public BigDecimal getAvailableDayTradingPower() {
-        return dayTradingBuyingPower != null ? dayTradingBuyingPower : BigDecimal.ZERO;
+        return Optional.ofNullable(dayTradingBuyingPower).orElse(BigDecimal.ZERO);
     }
     
     /**

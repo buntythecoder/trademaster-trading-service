@@ -11,6 +11,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.annotation.Scheduled;
 
 import java.math.BigDecimal;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
 /**
@@ -80,9 +81,9 @@ public class MetricsEnhancedConfiguration {
             
             alertingService.checkRiskThresholds(currentExposure, dailyPnL)
                 .whenComplete((result, throwable) -> {
-                    if (throwable != null) {
-                        log.error("Error monitoring risk thresholds", throwable);
-                    }
+                    // Eliminates if-statement using Optional.ofNullable().ifPresent()
+                    Optional.ofNullable(throwable)
+                        .ifPresent(t -> log.error("Error monitoring risk thresholds", t));
                 });
             
         } catch (Exception e) {
@@ -108,7 +109,13 @@ public class MetricsEnhancedConfiguration {
             
             // Record alerting health
             boolean alertingHealthy = alertingService.isAlertingHealthy();
-            log.debug("Alerting system health: {}", alertingHealthy ? "HEALTHY" : "UNHEALTHY");
+
+            // Eliminates ternary operator using Optional.filter().map().orElse()
+            String healthStatus = Optional.of(alertingHealthy)
+                .filter(healthy -> healthy)
+                .map(healthy -> "HEALTHY")
+                .orElse("UNHEALTHY");
+            log.debug("Alerting system health: {}", healthStatus);
             
         } catch (Exception e) {
             log.error("Error updating business metrics", e);
@@ -228,22 +235,22 @@ public class MetricsEnhancedConfiguration {
                 boolean alertingHealthy = alertingService.isAlertingHealthy();
                 int activeCooldowns = alertingService.getActiveCooldowns();
                 long totalAlerts = alertingService.getTotalAlertsTriggered();
-                
-                if (alertingHealthy) {
-                    return org.springframework.boot.actuate.health.Health.up()
+
+                // Eliminates if-else using Optional.filter().map().orElseGet()
+                return Optional.of(alertingHealthy)
+                    .filter(healthy -> healthy)
+                    .map(healthy -> org.springframework.boot.actuate.health.Health.up()
                         .withDetail("alerting", "HEALTHY")
                         .withDetail("activeCooldowns", activeCooldowns)
                         .withDetail("totalAlerts", totalAlerts)
                         .withDetail("metricsCollection", "ACTIVE")
-                        .build();
-                } else {
-                    return org.springframework.boot.actuate.health.Health.down()
+                        .build())
+                    .orElseGet(() -> org.springframework.boot.actuate.health.Health.down()
                         .withDetail("alerting", "UNHEALTHY")
                         .withDetail("activeCooldowns", activeCooldowns)
                         .withDetail("issue", "Too many active alert cooldowns")
-                        .build();
-                }
-                
+                        .build());
+
             } catch (Exception e) {
                 return org.springframework.boot.actuate.health.Health.down()
                     .withDetail("error", e.getMessage())

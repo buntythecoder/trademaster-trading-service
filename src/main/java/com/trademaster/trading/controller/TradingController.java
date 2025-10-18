@@ -1,6 +1,6 @@
 package com.trademaster.trading.controller;
 
-import com.trademaster.trading.common.Result;
+import com.trademaster.common.functional.Result;
 import com.trademaster.trading.common.TradeError;
 import com.trademaster.trading.dto.ErrorResponse;
 import com.trademaster.trading.dto.OrderRequest;
@@ -20,6 +20,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
@@ -126,57 +127,45 @@ public class TradingController {
             @Parameter(hidden = true) @Valid @RequestBody OrderRequest orderRequest,
             @Parameter(hidden = true) @AuthenticationPrincipal TradingUserPrincipal principal,
             @Parameter(hidden = true) HttpServletRequest request) {
-        
+
         Long userId = principal.getUserId();
-        
-        log.info("Placing order for user {}: {} {} {} @ {}", 
-                userId, orderRequest.side(), orderRequest.quantity(), 
-                orderRequest.symbol(), orderRequest.limitPrice());
-        
         String correlationId = generateCorrelationId();
-        
-        try {
-            // Simple blocking call - Virtual Thread handles concurrency
-            Result<OrderResponse, TradeError> result = orderService.placeOrder(orderRequest, userId);
-            
-            return switch (result) {
-                case Result.Success<OrderResponse, TradeError> success -> {
-                    log.info("Order placed successfully - correlationId: {}, orderId: {}", 
-                            correlationId, success.value().orderId());
-                    yield ResponseEntity.status(HttpStatus.CREATED).body(success.value());
-                }
-                case Result.Failure<OrderResponse, TradeError> failure -> {
-                    log.warn("Order placement failed - correlationId: {}, userId: {}, error: {}", 
-                            correlationId, userId, failure.error().getMessage());
-                    
-                    ErrorResponse errorResponse = ErrorResponse.fromTradeError(
-                        failure.error(), 
-                        request.getRequestURI(), 
-                        HttpStatus.BAD_REQUEST.value(), 
-                        correlationId
-                    );
-                    yield ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
-                }
-            };
-            
-        } catch (Exception e) {
-            log.error("Failed to place order - correlationId: {}, userId: {}, error: {}", 
-                     correlationId, userId, e.getMessage());
-            
-            ErrorResponse errorResponse = ErrorResponse.genericError(
-                "Internal server error during order placement",
-                request.getRequestURI(),
-                HttpStatus.INTERNAL_SERVER_ERROR.value(),
-                correlationId
-            );
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
-        }
+
+        log.info("Placing order for user {} - correlationId: {}, {} {} {} @ {}",
+                userId, correlationId, orderRequest.side(), orderRequest.quantity(),
+                orderRequest.symbol(), orderRequest.limitPrice());
+
+        // Functional error handling - no try-catch (Rule #11 compliance)
+        // Simple blocking call - Virtual Thread handles concurrency
+        Result<OrderResponse, TradeError> result = orderService.placeOrder(orderRequest, userId);
+
+        return switch (result) {
+            case Result.Success<OrderResponse, TradeError> success -> {
+                log.info("Order placed successfully - correlationId: {}, orderId: {}",
+                        correlationId, success.value().orderId());
+                yield ResponseEntity.status(HttpStatus.CREATED).body(success.value());
+            }
+            case Result.Failure<OrderResponse, TradeError> failure -> {
+                log.warn("Order placement failed - correlationId: {}, userId: {}, error: {}",
+                        correlationId, userId, failure.error().getMessage());
+
+                ErrorResponse errorResponse = ErrorResponse.fromTradeError(
+                    failure.error(),
+                    request.getRequestURI(),
+                    HttpStatus.BAD_REQUEST.value(),
+                    correlationId
+                );
+                yield ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
+            }
+        };
     }
     
     /**
      * Get order by ID (High-performance lookup)
+     * Redis cache: 30-second TTL for order data
      */
     @GetMapping("/{orderId}")
+    @Cacheable(value = "orders", key = "#principal.userId + '-' + #orderId")
     @Operation(
         summary = "Get order details",
         description = "Retrieve comprehensive information about a specific order including status, fills, and timestamps",
@@ -216,16 +205,21 @@ public class TradingController {
         return switch (result) {
             case Result.Success<OrderResponse, TradeError> success -> ResponseEntity.ok(success.value());
             case Result.Failure<OrderResponse, TradeError> failure -> {
-                log.warn("Order retrieval failed - correlationId: {}, orderId: {}, userId: {}, error: {}", 
+                log.warn("Order retrieval failed - correlationId: {}, orderId: {}, userId: {}, error: {}",
                         correlationId, orderId, userId, failure.error().getMessage());
-                
-                int status = failure.error().getCode().equals("ENTITY_NOT_FOUND") ? 
-                    HttpStatus.NOT_FOUND.value() : HttpStatus.BAD_REQUEST.value();
-                    
+
+                // Pattern matching for HTTP status (Rule #14 compliance)
+                int status = switch (failure.error().getCode()) {
+                    case "ENTITY_NOT_FOUND" -> HttpStatus.NOT_FOUND.value();
+                    case "ACCESS_DENIED" -> HttpStatus.FORBIDDEN.value();
+                    case "VALIDATION_ERROR" -> HttpStatus.BAD_REQUEST.value();
+                    default -> HttpStatus.BAD_REQUEST.value();
+                };
+
                 ErrorResponse errorResponse = ErrorResponse.fromTradeError(
-                    failure.error(), 
-                    request.getRequestURI(), 
-                    status, 
+                    failure.error(),
+                    request.getRequestURI(),
+                    status,
                     correlationId
                 );
                 yield ResponseEntity.status(status).body(errorResponse);
@@ -297,8 +291,10 @@ public class TradingController {
     
     /**
      * Get active orders for user (Optimized query)
+     * Redis cache: 10-second TTL for active orders (more volatile data)
      */
     @GetMapping("/active")
+    @Cacheable(value = "active-orders", key = "#principal.userId")
     @Operation(
         summary = "Get active orders",
         description = "Retrieve all orders with active status (ACKNOWLEDGED, PARTIALLY_FILLED) for the authenticated user",
@@ -364,27 +360,19 @@ public class TradingController {
         log.info("Modifying order {} for user {}", orderId, userId);
         
         // Async processing with Virtual Threads for high concurrency
+        // Functional error handling - no try-catch (Rule #11 compliance)
         return CompletableFuture.supplyAsync(() -> {
-            try {
-                Result<OrderResponse, TradeError> result = orderService.modifyOrder(orderId, modificationRequest, userId);
-                return switch (result) {
-                    case Result.Success<OrderResponse, TradeError> success -> {
-                        log.info("Order modified successfully: {}", orderId);
-                        yield ResponseEntity.ok(success.value());
-                    }
-                    case Result.Failure<OrderResponse, TradeError> failure -> {
-                        log.warn("Failed to modify order {}: {}", orderId, failure.error().getMessage());
-                        yield ResponseEntity.status(HttpStatus.BAD_REQUEST).body(null);
-                    }
-                };
-                
-            } catch (IllegalArgumentException | IllegalStateException e) {
-                log.warn("Failed to modify order {}: {}", orderId, e.getMessage());
-                throw e;
-            } catch (Exception e) {
-                log.error("Unexpected error modifying order {}: {}", orderId, e.getMessage());
-                throw new RuntimeException("Order modification failed: " + e.getMessage(), e);
-            }
+            Result<OrderResponse, TradeError> result = orderService.modifyOrder(orderId, modificationRequest, userId);
+            return switch (result) {
+                case Result.Success<OrderResponse, TradeError> success -> {
+                    log.info("Order modified successfully: {}", orderId);
+                    yield ResponseEntity.ok(success.value());
+                }
+                case Result.Failure<OrderResponse, TradeError> failure -> {
+                    log.warn("Failed to modify order {}: {}", orderId, failure.error().getMessage());
+                    yield ResponseEntity.status(HttpStatus.BAD_REQUEST).body(null);
+                }
+            };
         });
     }
     
@@ -418,34 +406,31 @@ public class TradingController {
                 in = ParameterIn.PATH
             ) @PathVariable String orderId,
             @Parameter(hidden = true) @AuthenticationPrincipal TradingUserPrincipal principal) {
-        
+
         Long userId = principal.getUserId();
-        
+
         log.info("Cancelling order {} for user {}", orderId, userId);
-        
-        try {
-            Result<OrderResponse, TradeError> result = orderService.cancelOrder(orderId, userId);
-            return switch (result) {
-                case Result.Success<OrderResponse, TradeError> success -> {
-                    log.info("Order cancelled successfully: {}", orderId);
-                    yield ResponseEntity.ok(success.value());
-                }
-                case Result.Failure<OrderResponse, TradeError> failure -> ResponseEntity.notFound().build();
-            };
-            
-        } catch (IllegalStateException e) {
-            log.warn("Cannot cancel order {}: {}", orderId, e.getMessage());
-            throw e;
-        } catch (Exception e) {
-            log.error("Failed to cancel order {}: {}", orderId, e.getMessage());
-            throw new RuntimeException("Order cancellation failed: " + e.getMessage(), e);
-        }
+
+        // Functional error handling - no try-catch (Rule #11 compliance)
+        Result<OrderResponse, TradeError> result = orderService.cancelOrder(orderId, userId);
+        return switch (result) {
+            case Result.Success<OrderResponse, TradeError> success -> {
+                log.info("Order cancelled successfully: {}", orderId);
+                yield ResponseEntity.ok(success.value());
+            }
+            case Result.Failure<OrderResponse, TradeError> failure -> {
+                log.warn("Cannot cancel order {}: {}", orderId, failure.error().getMessage());
+                yield ResponseEntity.notFound().build();
+            }
+        };
     }
     
     /**
      * Get order status (Ultra-fast lightweight endpoint)
+     * Redis cache: 5-second TTL for real-time status polling
      */
     @GetMapping("/{orderId}/status")
+    @Cacheable(value = "order-status", key = "#principal.userId + '-' + #orderId")
     @Operation(
         summary = "Get order status",
         description = "Get current status of an order (lightweight endpoint for status polling)",
@@ -481,8 +466,10 @@ public class TradingController {
     
     /**
      * Get order count for user (Dashboard widget optimization)
+     * Redis cache: 30-second TTL for order count aggregations
      */
     @GetMapping("/count")
+    @Cacheable(value = "order-counts", key = "#principal.userId")
     @Operation(
         summary = "Get order counts",
         description = "Get aggregated count of orders by status for user dashboard widgets",
@@ -539,29 +526,22 @@ public class TradingController {
         log.info("Processing {} bulk orders for user {}", orderRequests.size(), userId);
         
         // Parallel processing with Virtual Threads - unlimited scalability
+        // Functional error handling - no try-catch (Rule #11 compliance)
         return CompletableFuture.supplyAsync(() -> {
             List<OrderResponse> responses = orderRequests.parallelStream()
-                .map(request -> {
-                    try {
-                        Result<OrderResponse, TradeError> result = orderService.placeOrder(request, userId);
-                        return switch (result) {
-                            case Result.Success<OrderResponse, TradeError> success -> success.value();
-                            case Result.Failure<OrderResponse, TradeError> failure -> {
-                                log.error("Failed to process bulk order: {}", failure.error().getMessage());
-                                yield null;
-                            }
-                        };
-                    } catch (Exception e) {
-                        log.error("Failed to process bulk order: {}", e.getMessage());
-                        return null;
+                .map(request -> switch (orderService.placeOrder(request, userId)) {
+                    case Result.Success<OrderResponse, TradeError> success -> success.value();
+                    case Result.Failure<OrderResponse, TradeError> failure -> {
+                        log.error("Failed to process bulk order: {}", failure.error().getMessage());
+                        yield null;
                     }
                 })
                 .filter(Objects::nonNull)
                 .toList();
-                
-            log.info("Processed {}/{} bulk orders successfully for user {}", 
+
+            log.info("Processed {}/{} bulk orders successfully for user {}",
                     responses.size(), orderRequests.size(), userId);
-                    
+
             return ResponseEntity.ok(responses);
         });
     }

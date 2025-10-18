@@ -3,6 +3,9 @@ plugins {
     id 'org.springframework.boot' version '3.4.1'
     id 'io.spring.dependency-management' version '1.1.6'
     id 'org.flywaydb.flyway' version '10.0.0'
+    id 'io.gatling.gradle' version '3.11.5.2'
+    id 'org.owasp.dependencycheck' version '10.0.4'
+    id 'org.sonarqube' version '5.1.0.4882'
 }
 
 // MANDATORY: Gradle version check for Java 24 compatibility
@@ -60,6 +63,9 @@ dependencyManagement {
 }
 
 dependencies {
+    // TradeMaster Common Service Library - Shared components across microservices
+    implementation project(':trademaster-common-service-lib')
+
     // Spring Boot MVC with Virtual Threads for high-performance blocking I/O
     implementation 'org.springframework.boot:spring-boot-starter-web'
     implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
@@ -160,6 +166,11 @@ dependencies {
     
     // Test runtime
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+
+    // Gatling for load testing
+    gatling 'io.gatling.highcharts:gatling-charts-highcharts:3.11.5'
+    gatling 'io.gatling:gatling-app:3.11.5'
+    gatling 'io.gatling:gatling-recorder:3.11.5'
 }
 
 // MANDATORY: Java 24 Preview Features per TradeMaster Standards
@@ -206,6 +217,10 @@ flyway {
     validateOnMigrate = true
 }
 
+// Gatling configuration for load testing (simplified for newer plugin version)
+// Run gatling tests with: ./gradlew gatlingRun
+// Configuration is handled via plugin defaults
+
 
 // Spring Boot configuration
 springBoot {
@@ -227,5 +242,70 @@ task setupKafkaTopics {
     description = 'Creates Kafka topics for trading events'
     doLast {
         println "Kafka topics setup completed. Trading event topics created."
+    }
+}
+
+// OWASP Dependency Check configuration for security vulnerability scanning
+dependencyCheck {
+    // Output formats
+    formats = ['HTML', 'JSON', 'XML']
+
+    // Fail build on CVSS score threshold
+    failBuildOnCVSS = 7.0 // Fail on High/Critical vulnerabilities
+
+    // Suppress false positives (create suppression.xml if needed)
+    if (file('owasp-dependency-check-suppressions.xml').exists()) {
+        suppressionFile = file('owasp-dependency-check-suppressions.xml')
+    }
+
+    // Analyzers configuration
+    analyzers {
+        assemblyEnabled = false // .NET assemblies not used
+        nodeEnabled = false // Node.js not used
+    }
+}
+
+// SonarQube configuration for code quality and security analysis
+sonarqube {
+    properties {
+        property 'sonar.projectKey', 'trademaster-trading-service'
+        property 'sonar.projectName', 'TradeMaster Trading Service'
+        property 'sonar.host.url', System.getenv('SONAR_HOST_URL') ?: 'http://localhost:9000'
+        property 'sonar.token', System.getenv('SONAR_TOKEN') ?: ''
+
+        // Source and binary directories
+        property 'sonar.sources', 'src/main/java'
+        property 'sonar.tests', 'src/test/java'
+        property 'sonar.java.binaries', 'build/classes/java/main'
+
+        // Coverage report
+        property 'sonar.coverage.jacoco.xmlReportPaths', 'build/reports/jacoco/test/jacocoTestReport.xml'
+
+        // Code quality gates
+        property 'sonar.qualitygate.wait', 'true'
+
+        // Security-specific properties
+        property 'sonar.java.spotbugs.reportPaths', 'build/reports/spotbugs/main.xml'
+    }
+}
+
+// Security scanning task - runs all security checks
+task securityScan {
+    group = 'security'
+    description = 'Runs comprehensive security scanning (OWASP Dependency Check + SonarQube)'
+    dependsOn dependencyCheckAnalyze, sonarqube
+
+    doLast {
+        println """
+        =====================================
+        Security Scan Complete
+        =====================================
+        Reports generated:
+        - OWASP Dependency Check: build/reports/dependency-check-report.html
+        - SonarQube: ${sonarqube.properties['sonar.host.url']}/dashboard?id=trademaster-trading-service
+
+        Review reports for security vulnerabilities and code quality issues.
+        =====================================
+        """.stripIndent()
     }
 }

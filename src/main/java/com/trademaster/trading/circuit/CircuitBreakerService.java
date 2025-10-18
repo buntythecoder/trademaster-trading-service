@@ -1,6 +1,6 @@
 package com.trademaster.trading.circuit;
 
-import com.trademaster.trading.common.Result;
+import com.trademaster.common.functional.Result;
 import com.trademaster.trading.common.TradeError;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
@@ -8,6 +8,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Supplier;
 
@@ -242,13 +243,16 @@ public class CircuitBreakerService {
             return circuitBreaker.executeSupplier(() -> {
                 try {
                     Result<T, TradeError> result = operation.get();
-                    
+
+                    // Eliminates if-statement using Optional.filter().ifPresent()
                     // If the result is a failure, throw an exception to trigger circuit breaker
-                    if (result.isFailure()) {
-                        TradeError error = result.getError().orElseThrow();
-                        throw new CircuitBreakerException(error.getMessage(), new RuntimeException(error.getMessage()));
-                    }
-                    
+                    Optional.of(result)
+                        .filter(Result::isFailure)
+                        .ifPresent(r -> {
+                            TradeError error = r.getError();
+                            throw new CircuitBreakerException(error.getMessage(), new RuntimeException(error.getMessage()));
+                        });
+
                     return result;
                 } catch (Exception e) {
                     log.error("{} operation failed: {}", operationName, e.getMessage());
@@ -278,15 +282,18 @@ public class CircuitBreakerService {
             String operationName) {
         
         try {
-            return circuitBreaker.executeCompletionStage(() -> 
+            return circuitBreaker.executeCompletionStage(() ->
                 operation.get().thenApply(result -> {
+                    // Eliminates if-statement using Optional.filter().ifPresent()
                     // If the result is a failure, complete exceptionally to trigger circuit breaker
-                    if (result.isFailure()) {
-                        TradeError error = result.getError().orElseThrow();
-                        CompletableFuture<Result<T, TradeError>> failedFuture = new CompletableFuture<>();
-                        failedFuture.completeExceptionally(new CircuitBreakerException(error.getMessage(), new RuntimeException(error.getMessage())));
-                        return failedFuture.join();
-                    }
+                    Optional.of(result)
+                        .filter(Result::isFailure)
+                        .ifPresent(r -> {
+                            TradeError error = r.getError();
+                            CompletableFuture<Result<T, TradeError>> failedFuture = new CompletableFuture<>();
+                            failedFuture.completeExceptionally(new CircuitBreakerException(error.getMessage(), new RuntimeException(error.getMessage())));
+                            failedFuture.join();  // This will throw the exception
+                        });
                     return result;
                 })).toCompletableFuture();
                 

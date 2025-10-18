@@ -6,6 +6,7 @@ import lombok.Data;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Risk Check Result
@@ -115,10 +116,11 @@ public class RiskCheckResult {
             .message(message)
             .severity(severity)
             .build());
-        
-        if (severity == RiskSeverity.HIGH || severity == RiskSeverity.CRITICAL) {
-            passed = false;
-        }
+
+        // Eliminates if-statement using Optional.filter().ifPresent()
+        Optional.of(severity)
+            .filter(s -> s == RiskSeverity.HIGH || s == RiskSeverity.CRITICAL)
+            .ifPresent(s -> passed = false);
     }
     
     /**
@@ -169,19 +171,16 @@ public class RiskCheckResult {
     
     /**
      * Calculate risk utilization percentage
+     * Eliminates if-statements using Optional.filter().flatMap() chain
      */
     public double getRiskUtilization() {
-        if (maxPositionSize == null || maxPositionSize.compareTo(BigDecimal.ZERO) <= 0) {
-            return 0.0;
-        }
-        
-        if (currentExposure == null) {
-            return 0.0;
-        }
-        
-        return currentExposure.divide(maxPositionSize, 4, BigDecimal.ROUND_HALF_UP)
-                            .multiply(BigDecimal.valueOf(100))
-                            .doubleValue();
+        return Optional.ofNullable(maxPositionSize)
+            .filter(max -> max.compareTo(BigDecimal.ZERO) > 0)
+            .flatMap(max -> Optional.ofNullable(currentExposure)
+                .map(exposure -> exposure.divide(max, 4, BigDecimal.ROUND_HALF_UP)
+                                        .multiply(BigDecimal.valueOf(100))
+                                        .doubleValue()))
+            .orElse(0.0);
     }
     
     /**

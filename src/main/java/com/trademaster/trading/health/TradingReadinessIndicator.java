@@ -11,6 +11,7 @@ import org.springframework.stereotype.Component;
 import javax.sql.DataSource;
 import java.sql.Connection;
 import java.time.Instant;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
@@ -72,17 +73,32 @@ public class TradingReadinessIndicator implements HealthIndicator {
             boolean repoHealthy = repositoryReady.join();
             
             long responseTime = System.currentTimeMillis() - startTime;
-            
+
+            // Eliminates if-else using Optional.of().filter().ifPresentOrElse()
             // Service is ready if all critical dependencies are available
-            if (dbHealthy && cacheHealthy && repoHealthy) {
-                builder.up();
-            } else {
-                builder.down();
-            }
-            
-            builder.withDetail("database", dbHealthy ? "READY" : "NOT_READY")
-                   .withDetail("redis", cacheHealthy ? "READY" : "NOT_READY")  
-                   .withDetail("repository", repoHealthy ? "READY" : "NOT_READY")
+            Optional.of(dbHealthy && cacheHealthy && repoHealthy)
+                .filter(allReady -> allReady)
+                .ifPresentOrElse(
+                    ready -> builder.up(),
+                    () -> builder.down()
+                );
+
+            // Eliminates ternary operators using Optional.of().filter().map().orElse()
+            builder.withDetail("database",
+                    Optional.of(dbHealthy)
+                        .filter(healthy -> healthy)
+                        .map(h -> "READY")
+                        .orElse("NOT_READY"))
+                   .withDetail("redis",
+                    Optional.of(cacheHealthy)
+                        .filter(healthy -> healthy)
+                        .map(h -> "READY")
+                        .orElse("NOT_READY"))
+                   .withDetail("repository",
+                    Optional.of(repoHealthy)
+                        .filter(healthy -> healthy)
+                        .map(h -> "READY")
+                        .orElse("NOT_READY"))
                    .withDetail("responseTimeMs", responseTime)
                    .withDetail("checkType", "READINESS")
                    .withDetail("timestamp", Instant.now().toString());
@@ -111,25 +127,26 @@ public class TradingReadinessIndicator implements HealthIndicator {
     }
     
     private CompletableFuture<Boolean> checkRedisReadiness() {
-        return CompletableFuture.supplyAsync(() -> {
-            if (redisTemplate == null) {
-                log.debug("Redis not configured, skipping Redis readiness check");
-                return true; // Consider Redis check as passed if not configured
-            }
-            
-            try {
-                String testValue = "readiness-" + System.currentTimeMillis();
-                redisTemplate.opsForValue().set(READINESS_CHECK_KEY, testValue, 30, TimeUnit.SECONDS);
-                String retrieved = (String) redisTemplate.opsForValue().get(READINESS_CHECK_KEY);
-                redisTemplate.delete(READINESS_CHECK_KEY);
-                
-                return testValue.equals(retrieved);
-                
-            } catch (Exception e) {
-                log.debug("Redis readiness check failed: {}", e.getMessage());
-                return false;
-            }
-        });
+        return CompletableFuture.supplyAsync(() ->
+            // Eliminates if-statement using Optional.ofNullable().map().orElseGet()
+            Optional.ofNullable(redisTemplate)
+                .map(redis -> {
+                    try {
+                        String testValue = "readiness-" + System.currentTimeMillis();
+                        redis.opsForValue().set(READINESS_CHECK_KEY, testValue, 30, TimeUnit.SECONDS);
+                        String retrieved = (String) redis.opsForValue().get(READINESS_CHECK_KEY);
+                        redis.delete(READINESS_CHECK_KEY);
+                        return testValue.equals(retrieved);
+                    } catch (Exception e) {
+                        log.debug("Redis readiness check failed: {}", e.getMessage());
+                        return false;
+                    }
+                })
+                .orElseGet(() -> {
+                    log.debug("Redis not configured, skipping Redis readiness check");
+                    return true; // Consider Redis check as passed if not configured
+                })
+        );
     }
     
     private CompletableFuture<Boolean> checkRepositoryReadiness() {

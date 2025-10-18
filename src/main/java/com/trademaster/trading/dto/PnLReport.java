@@ -10,6 +10,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * P&L Report DTO
@@ -106,7 +107,7 @@ public class PnLReport {
     
     // Helper Methods
     public BigDecimal getOverallReturnPercent() {
-        return totalPnL != null ? totalPnL : BigDecimal.ZERO;
+        return Optional.ofNullable(totalPnL).orElse(BigDecimal.ZERO);
     }
     
     public BigDecimal getProfitFactor() {
@@ -143,9 +144,9 @@ public class PnLReport {
     
     public Map<String, Object> getSummaryStats() {
         return Map.of(
-            "totalPnL", totalPnL != null ? totalPnL : BigDecimal.ZERO,
-            "realizedPnL", realizedPnL != null ? realizedPnL : BigDecimal.ZERO,
-            "unrealizedPnL", unrealizedPnL != null ? unrealizedPnL : BigDecimal.ZERO
+            "totalPnL", Optional.ofNullable(totalPnL).orElse(BigDecimal.ZERO),
+            "realizedPnL", Optional.ofNullable(realizedPnL).orElse(BigDecimal.ZERO),
+            "unrealizedPnL", Optional.ofNullable(unrealizedPnL).orElse(BigDecimal.ZERO)
         );
     }
     

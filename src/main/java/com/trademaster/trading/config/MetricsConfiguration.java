@@ -8,6 +8,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.stereotype.Component;
 
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -456,6 +457,7 @@ public class MetricsConfiguration {
         }
         
         // Trade Execution Methods
+        // Uses Optional to eliminate if-else statement
         public void recordTradeExecution(String symbol, String side, double quantity, double price,
                                        boolean isPartialFill, long fillLatencyMs) {
             Counter.builder("trading.trades.executed")
@@ -464,29 +466,41 @@ public class MetricsConfiguration {
                 .tag("side", side)
                 .register(meterRegistry)
                 .increment();
-            
-            if (isPartialFill) {
-                Counter.builder("trading.trades.partial_fills")
-                    .tag("service", "trading")
-                    .tag("symbol", symbol)
-                    .register(meterRegistry)
-                    .increment();
-            } else {
-                Counter.builder("trading.trades.full_fills")
-                    .tag("service", "trading")
-                    .tag("symbol", symbol)
-                    .register(meterRegistry)
-                    .increment();
-            }
-            
+
+            // Eliminates if-else with Optional.ifPresentOrElse
+            Optional.of(isPartialFill)
+                .filter(partial -> partial)
+                .ifPresentOrElse(
+                    partial -> Counter.builder("trading.trades.partial_fills")
+                        .tag("service", "trading")
+                        .tag("symbol", symbol)
+                        .register(meterRegistry)
+                        .increment(),
+                    () -> Counter.builder("trading.trades.full_fills")
+                        .tag("service", "trading")
+                        .tag("symbol", symbol)
+                        .register(meterRegistry)
+                        .increment()
+                );
+
             fillLatency.record(fillLatencyMs, java.util.concurrent.TimeUnit.MILLISECONDS);
         }
         
+        // Uses Optional to eliminate nested ternary operators
         public void recordSlippageEvent(String symbol, double expectedPrice, double actualPrice, double slippageBps) {
+            // Eliminates nested ternary with Optional chain
+            String severity = Optional.of(slippageBps)
+                .filter(bps -> bps > 10)
+                .map(bps -> "high")
+                .or(() -> Optional.of(slippageBps)
+                    .filter(bps -> bps > 5)
+                    .map(bps -> "medium"))
+                .orElse("low");
+
             Counter.builder("trading.trades.slippage_events")
                 .tag("service", "trading")
                 .tag("symbol", symbol)
-                .tag("slippage_severity", slippageBps > 10 ? "high" : slippageBps > 5 ? "medium" : "low")
+                .tag("slippage_severity", severity)
                 .register(meterRegistry)
                 .increment();
         }
@@ -519,20 +533,34 @@ public class MetricsConfiguration {
                 .increment();
         }
         
+        // Uses Optional to eliminate ternary operator
         public void recordPositionLimitBreach(String symbol, double currentPosition, double limit) {
+            // Eliminates ternary with Optional.filter().map().orElse()
+            String breachType = Optional.of(currentPosition)
+                .filter(pos -> pos > limit)
+                .map(pos -> "long")
+                .orElse("short");
+
             Counter.builder("trading.risk.position_limit_breaches")
                 .tag("service", "trading")
                 .tag("symbol", symbol)
-                .tag("breach_type", currentPosition > limit ? "long" : "short")
+                .tag("breach_type", breachType)
                 .register(meterRegistry)
                 .increment();
         }
         
+        // Uses Optional to eliminate ternary operator
         public void recordMarginCall(String accountId, double requiredMargin, double availableMargin) {
+            // Eliminates ternary with Optional.filter().map().orElse()
+            String severity = Optional.of(requiredMargin / availableMargin)
+                .filter(ratio -> ratio > 2.0)
+                .map(ratio -> "critical")
+                .orElse("warning");
+
             Counter.builder("trading.risk.margin_calls")
                 .tag("service", "trading")
                 .tag("account_id", accountId)
-                .tag("severity", (requiredMargin / availableMargin) > 2.0 ? "critical" : "warning")
+                .tag("severity", severity)
                 .register(meterRegistry)
                 .increment();
         }
@@ -560,11 +588,21 @@ public class MetricsConfiguration {
             marketDataLatency.record(latencyMs, java.util.concurrent.TimeUnit.MILLISECONDS);
         }
         
+        // Uses Optional to eliminate nested ternary operators
         public void recordStaleDataEvent(String symbol, long ageMs) {
+            // Eliminates nested ternary with Optional chain
+            String staleness = Optional.of(ageMs)
+                .filter(age -> age > 5000)
+                .map(age -> "critical")
+                .or(() -> Optional.of(ageMs)
+                    .filter(age -> age > 1000)
+                    .map(age -> "high"))
+                .orElse("medium");
+
             Counter.builder("trading.market_data.stale_events")
                 .tag("service", "trading")
                 .tag("symbol", symbol)
-                .tag("staleness", ageMs > 5000 ? "critical" : ageMs > 1000 ? "high" : "medium")
+                .tag("staleness", staleness)
                 .register(meterRegistry)
                 .increment();
         }
@@ -591,25 +629,29 @@ public class MetricsConfiguration {
             strategyProcessingTime.record(processingTimeMs, java.util.concurrent.TimeUnit.MILLISECONDS);
         }
         
+        // Uses Optional to eliminate if-else statement
         public void recordStrategyTradeResult(String strategyName, String symbol, double pnl) {
-            if (pnl > 0) {
-                Counter.builder("trading.strategy.profit_trades")
-                    .tag("service", "trading")
-                    .tag("strategy", strategyName)
-                    .tag("symbol", symbol)
-                    .register(meterRegistry)
-                    .increment();
-            } else {
-                Counter.builder("trading.strategy.loss_trades")
-                    .tag("service", "trading")
-                    .tag("strategy", strategyName)
-                    .tag("symbol", symbol)
-                    .register(meterRegistry)
-                    .increment();
-            }
+            // Eliminates if-else with Optional.ifPresentOrElse
+            Optional.of(pnl)
+                .filter(p -> p > 0)
+                .ifPresentOrElse(
+                    p -> Counter.builder("trading.strategy.profit_trades")
+                        .tag("service", "trading")
+                        .tag("strategy", strategyName)
+                        .tag("symbol", symbol)
+                        .register(meterRegistry)
+                        .increment(),
+                    () -> Counter.builder("trading.strategy.loss_trades")
+                        .tag("service", "trading")
+                        .tag("strategy", strategyName)
+                        .tag("symbol", symbol)
+                        .register(meterRegistry)
+                        .increment()
+                );
         }
         
         // Broker Integration Methods
+        // Uses Optional to eliminate if-statement
         public void recordBrokerRequest(String broker, String operation, int statusCode, long responseTimeMs) {
             Counter.builder("trading.broker.requests")
                 .tag("service", "trading")
@@ -619,15 +661,16 @@ public class MetricsConfiguration {
                 .register(meterRegistry)
                 .increment();
             brokerResponseTime.record(responseTimeMs, java.util.concurrent.TimeUnit.MILLISECONDS);
-            
-            if (statusCode >= 400) {
-                Counter.builder("trading.broker.errors")
+
+            // Eliminates if-statement with Optional.filter().ifPresent()
+            Optional.of(statusCode)
+                .filter(code -> code >= 400)
+                .ifPresent(code -> Counter.builder("trading.broker.errors")
                     .tag("service", "trading")
                     .tag("broker", broker)
-                    .tag("status_code", String.valueOf(statusCode))
+                    .tag("status_code", String.valueOf(code))
                     .register(meterRegistry)
-                    .increment();
-            }
+                    .increment());
         }
         
         public void recordConnectionFailure(String broker, String reason) {
@@ -657,12 +700,22 @@ public class MetricsConfiguration {
                 .increment();
         }
         
+        // Uses Optional to eliminate nested ternary operators
         public void recordMissedOpportunity(String symbol, String reason, double potentialPnl) {
+            // Eliminates nested ternary with Optional chain
+            String significance = Optional.of(potentialPnl)
+                .filter(pnl -> pnl > 1000)
+                .map(pnl -> "high")
+                .or(() -> Optional.of(potentialPnl)
+                    .filter(pnl -> pnl > 100)
+                    .map(pnl -> "medium"))
+                .orElse("low");
+
             Counter.builder("trading.analysis.opportunity_missed")
                 .tag("service", "trading")
                 .tag("symbol", symbol)
                 .tag("reason", reason)
-                .tag("significance", potentialPnl > 1000 ? "high" : potentialPnl > 100 ? "medium" : "low")
+                .tag("significance", significance)
                 .register(meterRegistry)
                 .increment();
         }
@@ -685,29 +738,33 @@ public class MetricsConfiguration {
                 .record(durationMs, java.util.concurrent.TimeUnit.MILLISECONDS);
         }
         
+        // Uses Optional to eliminate if-else statement
         public void recordCacheOperation(String operation, boolean hit, long durationMs) {
             Timer.builder("trading.system.cache_operation_duration")
                 .tag("service", "trading")
                 .tag("operation", operation)
                 .register(meterRegistry)
                 .record(durationMs, java.util.concurrent.TimeUnit.MILLISECONDS);
-            
-            if (hit) {
-                Counter.builder("trading.system.cache_hits")
-                    .tag("service", "trading")
-                    .tag("operation", operation)
-                    .register(meterRegistry)
-                    .increment();
-            } else {
-                Counter.builder("trading.system.cache_misses")
-                    .tag("service", "trading")
-                    .tag("operation", operation)
-                    .register(meterRegistry)
-                    .increment();
-            }
+
+            // Eliminates if-else with Optional.ifPresentOrElse
+            Optional.of(hit)
+                .filter(h -> h)
+                .ifPresentOrElse(
+                    h -> Counter.builder("trading.system.cache_hits")
+                        .tag("service", "trading")
+                        .tag("operation", operation)
+                        .register(meterRegistry)
+                        .increment(),
+                    () -> Counter.builder("trading.system.cache_misses")
+                        .tag("service", "trading")
+                        .tag("operation", operation)
+                        .register(meterRegistry)
+                        .increment()
+                );
         }
         
         // API Methods
+        // Uses Optional to eliminate if-statement
         public void recordApiRequest(String endpoint, String method, int statusCode, long durationMs) {
             Counter.builder("trading.api.requests")
                 .tag("service", "trading")
@@ -717,15 +774,16 @@ public class MetricsConfiguration {
                 .register(meterRegistry)
                 .increment();
             apiRequestDuration.record(durationMs, java.util.concurrent.TimeUnit.MILLISECONDS);
-            
-            if (statusCode >= 400) {
-                Counter.builder("trading.api.errors")
+
+            // Eliminates if-statement with Optional.filter().ifPresent()
+            Optional.of(statusCode)
+                .filter(code -> code >= 400)
+                .ifPresent(code -> Counter.builder("trading.api.errors")
                     .tag("service", "trading")
                     .tag("endpoint", endpoint)
-                    .tag("status_code", String.valueOf(statusCode))
+                    .tag("status_code", String.valueOf(code))
                     .register(meterRegistry)
-                    .increment();
-            }
+                    .increment());
         }
         
         // Business Metrics Update Methods

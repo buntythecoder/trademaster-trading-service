@@ -11,6 +11,7 @@ import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
 import java.net.InetAddress;
 import java.time.Instant;
+import java.util.Optional;
 
 /**
  * Trading Audit Log Entity
@@ -153,12 +154,13 @@ public class TradingAuditLog {
      * Get user agent summary (first 100 characters)
      */
     public String getUserAgentSummary() {
-        if (userAgent == null) {
-            return null;
-        }
-        return userAgent.length() > 100 ? 
-            userAgent.substring(0, 100) + "..." : 
-            userAgent;
+        // Eliminates if-statement and ternary using Optional.ofNullable().map() chain
+        return Optional.ofNullable(userAgent)
+            .map(ua -> Optional.of(ua.length() > 100)
+                .filter(tooLong -> tooLong)
+                .map(tooLong -> ua.substring(0, 100) + "...")
+                .orElse(ua))
+            .orElse(null);
     }
     
     /**
