@@ -132,7 +132,7 @@ public class RiskManagementController {
                     RiskCheckResponse response = new RiskCheckResponse(
                         false,
                         "HIGH",
-                        List.of(failure.error().message()),
+                        List.of(failure.error().getMessage()),
                         Map.of(),
                         correlationId
                     );
@@ -236,7 +236,7 @@ public class RiskManagementController {
 
                     ComplianceCheckResponse response = new ComplianceCheckResponse(
                         false,
-                        List.of(failure.error().message()),
+                        List.of(failure.error().getMessage()),
                         Map.of(),
                         correlationId
                     );
@@ -369,7 +369,7 @@ public class RiskManagementController {
         order.setSymbol(request.symbol());
         order.setQuantity(request.quantity());
         order.setOrderType(request.orderType());
-        order.setPrice(request.price());
+        order.setLimitPrice(request.price());  // Order entity uses limitPrice field
         return order;
     }
 
